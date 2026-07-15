@@ -1,0 +1,16 @@
+tranche=201
+result=PASS
+up=PASS
+smp_gates_a_f=PASS
+interactive_bash=PASS
+gate14_10000=PASS
+gate15_up=PASS
+gate15_smp=PASS
+stale_tlb=0
+lock_overlap=0
+unexpected_traps=0
+panic_count=0
+resource_baseline=exact
+reserved_stack_handoffs_smp_gate15_final=1976
+kernel_size=945004
+kernel_sha256=c63fe4bfbaeaf674a4092c1c579cfe472fc433d2e89b4f55307484ed820e595e

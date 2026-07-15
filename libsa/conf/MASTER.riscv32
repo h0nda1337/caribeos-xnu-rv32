@@ -1,0 +1,11 @@
+######################################################################
+#
+#  RELEASE     = [ riscv32 mach ]
+#  PROFILE     = [ RELEASE profile ]
+#  DEBUG       = [ RELEASE debug ]
+#  DEVELOPMENT = [ RELEASE ]
+#
+######################################################################
+
+machine		"riscv32"				# <riscv32>
+cpu		"riscv32"				# <riscv32>

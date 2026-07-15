@@ -1,0 +1,9 @@
+######################################################################
+#BEGIN  Machine dependent Makefile fragment for riscv32
+######################################################################
+
+# RISC-V bring-up starts without handwritten assembly objects.
+
+######################################################################
+#END    Machine dependent Makefile fragment for riscv32
+######################################################################

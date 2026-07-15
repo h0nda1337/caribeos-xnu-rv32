@@ -1,0 +1,9 @@
+#
+# Experimental RISC-V 32-bit Platform Expert support files.
+#
+
+pexpert/riscv32/pe_stub.c	standard
+pexpert/riscv32/pe_bootargs.c	standard
+pexpert/riscv32/pe_init.c	standard
+pexpert/riscv32/pe_kprintf.c	standard
+pexpert/riscv32/pe_serial.c	standard

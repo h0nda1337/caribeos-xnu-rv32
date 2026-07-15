@@ -1,0 +1,26 @@
+######################################################################
+#
+#  Experimental RISC-V 32-bit configurations.
+#
+#  RELEASE     = [ riscv32 mach iokit mach_pe config_sched_proto ]
+#  PROFILE     = [ RELEASE profile ]
+#  DEBUG       = [ RELEASE debug mach_assert ]
+#  DEVELOPMENT = [ RELEASE mach_assert ]
+#
+######################################################################
+
+machine		"riscv32"				# <riscv32>
+cpu		"riscv32"				# <riscv32>
+
+makeoptions	OSFMK_MACHINE = "riscv32"		# <riscv32>
+makeoptions	CCONFIGFLAGS = "-O2"			# <riscv32>
+
+config		mach_kernel	swap generic		# <mach>
+
+options		RISCV32					# <riscv32>
+options		MACH_BSD				# <mach>
+options		IOKIT					# <iokit>
+options		MACH_PE					# <mach_pe>
+
+options		CONFIG_MACF				# <mach>
+options		CONFIG_AUDIT				# <mach>

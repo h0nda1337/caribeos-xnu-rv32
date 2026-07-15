@@ -1,0 +1,24 @@
+######################################################################
+#
+#  Experimental RISC-V 32-bit configurations.
+#
+#  BASE        = [ riscv32 mach bsmall audit ]
+#  RELEASE     = [ BASE NETWORKING NFS VPN FILESYS libdriver ]
+#  PROFILE     = [ RELEASE profile ]
+#  DEBUG       = [ BASE NETWORKING NFS VPN FILESYS libdriver_g debug mach_assert ]
+#  DEVELOPMENT = [ BASE NETWORKING NFS VPN FILESYS libdriver development mach_assert ]
+#
+######################################################################
+
+machine		"riscv32"				# <riscv32>
+cpu		"riscv32"				# <riscv32>
+
+makeoptions	CCONFIGFLAGS = "-O2"			# <riscv32>
+
+config		mach_kernel	swap generic		# <mach>
+
+options		RISCV32					# <riscv32>
+options		CONFIG_MACF				# <audit>
+options		CONFIG_MACF_SOCKET_SUBSET		# <audit>
+options		CONFIG_AUDIT				# <audit>
+options		CONFIG_APP_PROFILE=0			# <mach>

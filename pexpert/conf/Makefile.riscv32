@@ -1,0 +1,9 @@
+######################################################################
+#BEGIN  Machine dependent Makefile fragment for riscv32
+######################################################################
+
+# Platform Expert will be filled in against QEMU virt device-tree data.
+
+######################################################################
+#END    Machine dependent Makefile fragment for riscv32
+######################################################################

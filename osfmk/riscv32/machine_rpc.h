@@ -1,0 +1,4 @@
+#ifndef _RISCV32_MACHINE_RPC_H_
+#define _RISCV32_MACHINE_RPC_H_
+
+#endif /* _RISCV32_MACHINE_RPC_H_ */

@@ -1,0 +1,4 @@
+#ifndef _RISCV32_SCHED_PARAM_H_
+#define _RISCV32_SCHED_PARAM_H_
+
+#endif /* _RISCV32_SCHED_PARAM_H_ */

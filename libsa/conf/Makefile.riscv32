@@ -1,0 +1,9 @@
+######################################################################
+#BEGIN  Machine dependent Makefile fragment for riscv32
+######################################################################
+
+# No standalone RISC-V assembly is enabled in this first slice.
+
+######################################################################
+#END    Machine dependent Makefile fragment for riscv32
+######################################################################

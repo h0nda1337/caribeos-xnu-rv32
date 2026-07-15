@@ -1,0 +1,32 @@
+# CaribeOS local build products
+/BUILD/
+/tmp/
+*.o
+*.obj
+*.a
+*.so
+*.d
+*.dSYM/
+*.elf
+*.bin
+*.map
+*.log
+*.rsp
+*.tmp
+*.cache
+*.core
+core
+
+# Local tooling and editor state
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# The pre-Tranche-201 linked-worktree pointer is preserved in the raw snapshot.
+/.git-upstream-worktree-link-pre-tranche201

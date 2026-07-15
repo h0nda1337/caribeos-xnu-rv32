@@ -1,0 +1,41 @@
+#
+# Experimental RISC-V 32-bit support files.
+#
+
+osfmk/riscv32/bootstrap.c	standard
+osfmk/riscv32/bootinfo.c	standard
+osfmk/riscv32/commpage.c	standard
+osfmk/riscv32/context_switch.s	standard
+osfmk/riscv32/copyio.c		standard
+osfmk/riscv32/cpu.c		standard
+osfmk/riscv32/early_print.c	standard
+osfmk/riscv32/etimer.c		standard
+osfmk/riscv32/fdt.c		standard
+osfmk/riscv32/hfsplus.c		standard
+osfmk/riscv32/io_map.c		standard
+osfmk/riscv32/linux_exec.c	standard
+osfmk/riscv32/linux_initrd.c	standard
+osfmk/riscv32/linux_process.c	standard
+osfmk/riscv32/linux_signal.c	standard
+osfmk/riscv32/linux_syscall.c	standard
+osfmk/riscv32/tty.c		standard
+osfmk/riscv32/riscv32_locks.c	standard
+osfmk/riscv32/machine_routines.c	standard
+osfmk/riscv32/mig_subsystems.c	standard
+osfmk/riscv32/pal_routines.c	standard
+osfmk/riscv32/plic.c		standard
+osfmk/riscv32/pmap.c		standard
+osfmk/riscv32/runtime.c	standard
+osfmk/riscv32/rtclock.c		standard
+osfmk/riscv32/sbi.c		standard
+osfmk/riscv32/secondary_entry.s	standard
+osfmk/riscv32/syscall.c		standard
+osfmk/riscv32/riscv32_thread.c	standard
+osfmk/riscv32/trap.c		standard
+osfmk/riscv32/trap_entry.s	standard
+osfmk/riscv32/user_exception.c	standard
+osfmk/riscv32/user_return.s	standard
+osfmk/riscv32/umode_smoke.c	standard
+osfmk/riscv32/umode_smoke_payload.s	standard
+osfmk/riscv32/virtio_blk.c	standard
+osfmk/riscv32/virtio_mmio.c	standard

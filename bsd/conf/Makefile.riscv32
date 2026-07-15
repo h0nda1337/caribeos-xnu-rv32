@@ -1,0 +1,9 @@
+######################################################################
+#BEGIN  Machine dependent Makefile fragment for riscv32
+######################################################################
+
+# No RISC-V BSD assembly paths are enabled in the first bring-up slice.
+
+######################################################################
+#END    Machine dependent Makefile fragment for riscv32
+######################################################################

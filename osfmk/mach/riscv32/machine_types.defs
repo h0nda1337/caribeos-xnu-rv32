@@ -1,0 +1,39 @@
+#ifndef _MACH_RISCV32_MACHINE_TYPES_DEFS_
+#define _MACH_RISCV32_MACHINE_TYPES_DEFS_ 1
+
+type short = int16_t;
+type int = int32_t;
+type unsigned = uint32_t;
+
+type float = MACH_MSG_TYPE_REAL_32;
+type double = MACH_MSG_TYPE_REAL_64;
+
+type uintptr_t = uint32_t;
+type intptr_t = int32_t;
+type register_t = int32_t;
+type integer_t = int32_t;
+type natural_t = uint32_t;
+
+type vm_address_t = natural_t;
+type vm_offset_t = natural_t;
+type vm_size_t = natural_t;
+
+type mach_port_context_t = uint64_t;
+
+type mach_vm_address_t = uint64_t;
+type mach_vm_offset_t = uint64_t;
+type mach_vm_size_t = uint64_t;
+
+#if MACH_IPC_COMPAT
+#define MSG_TYPE_PORT_NAME natural_t
+#endif
+
+#define VM32_SUPPORT 1
+
+type vm32_address_t = uint32_t;
+type vm32_offset_t = uint32_t;
+type vm32_size_t = uint32_t;
+
+#endif /* _MACH_RISCV32_MACHINE_TYPES_DEFS_ */
+
+/* vim: set ft=c : */

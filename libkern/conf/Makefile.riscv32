@@ -1,0 +1,9 @@
+######################################################################
+#BEGIN  Machine dependent Makefile fragment for riscv32
+######################################################################
+
+# Keep libkern on portable C/C++ while the RISC-V atomics path is built.
+
+######################################################################
+#END    Machine dependent Makefile fragment for riscv32
+######################################################################

@@ -1,0 +1,5 @@
+powershell -ExecutionPolicy Bypass -File .\testproject.ps1 -Mode up -Seconds 45 -KeepHistory
+powershell -ExecutionPolicy Bypass -File .\testproject.ps1 -Mode gates -Seconds 50 -KeepHistory
+powershell -ExecutionPolicy Bypass -File .\testproject.ps1 -Mode interactive -Seconds 120 -KeepHistory
+powershell -ExecutionPolicy Bypass -File .\testproject.ps1 -Mode process-stability -Seconds 300 -KeepHistory
+powershell -ExecutionPolicy Bypass -File .\testproject.ps1 -Mode process-stress -Seconds 300 -StressRounds 10000 -KeepHistory
