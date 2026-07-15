@@ -56,6 +56,7 @@ REQUIRED = {
         "APPLE_LICENSE", "docs/PORT_STATUS.md", "docs/TRANCHE_201_RELEASE_NOTES.md",
         "docs/TRANCHE_201_EVIDENCE.md", "docs/PUBLIC_LICENSE_REVIEW.md",
         "docs/PUBLIC_SECURITY_AUDIT.md", "docs/DEVELOPMENT_WITH_CODEX.md",
+        "docs/REPRODUCIBILITY_REPORT.md",
     ],
     "runtime": [
         "README.md", "BUILDING.md", "RUNNING_QEMU.md", "TESTING.md", "RESTORE.md",
@@ -64,7 +65,7 @@ REQUIRED = {
         "docs/BOOT_CHAIN.md", "docs/DEVELOPER_PREVIEW.md",
         "docs/TRANCHE_201_RELEASE_NOTES.md", "docs/TRANCHE_201_EVIDENCE.md",
         "docs/PUBLIC_LICENSE_REVIEW.md", "docs/PUBLIC_SECURITY_AUDIT.md",
-        "docs/DEVELOPMENT_WITH_CODEX.md",
+        "docs/DEVELOPMENT_WITH_CODEX.md", "docs/REPRODUCIBILITY_REPORT.md",
     ],
 }
 GENERATED_PREFIXES = {
