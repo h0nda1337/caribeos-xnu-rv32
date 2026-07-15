@@ -1,5 +1,8 @@
 # XNU-CaribeOS RV32IMACSU
 
+[![Static checks](https://github.com/h0nda1337/caribeos-xnu-rv32/actions/workflows/static-checks.yml/badge.svg?branch=main)](https://github.com/h0nda1337/caribeos-xnu-rv32/actions/workflows/static-checks.yml?query=branch%3Amain)
+[![Documentation checks](https://github.com/h0nda1337/caribeos-xnu-rv32/actions/workflows/documentation-checks.yml/badge.svg?branch=main)](https://github.com/h0nda1337/caribeos-xnu-rv32/actions/workflows/documentation-checks.yml?query=branch%3Amain)
+
 Experimental XNU-based RV32IMACSU operating system kernel with Sv32, SMP, a
 Linux personality, real processes, and interactive GNU Bash.
 
@@ -8,8 +11,13 @@ endorsed by, or supported by Apple Inc. It is not macOS, is not a complete
 Darwin distribution, and is not production ready.
 
 This repository is based on Apple's open-source XNU 2050.48.11 release and
-contains the RV32 port used by CaribeOS. The companion runtime repository owns
-CaribeBootX, the HFS+ image builder, userland, QEMU runners, and semantic gates.
+contains the RV32 port used by CaribeOS. The companion
+[CaribeOS runtime repository](https://github.com/h0nda1337/caribeos-runtime-rv32)
+owns CaribeBootX, the HFS+ image builder, userland, QEMU runners, and semantic
+gates.
+
+The badges above report the public static and documentation checks. They do not
+represent a full kernel build or the preserved long-form boot suites.
 
 ## Boot Contract
 
