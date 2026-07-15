@@ -3,10 +3,16 @@
 CaribeOS is research software. It has not received a production security
 review and must not protect sensitive workloads.
 
-Report suspected vulnerabilities privately to the repository owner. Include
-the affected commit/tag, QEMU configuration, minimal reproducer, and serial
-log. Do not include credentials, private keys, proprietary Apple material, or
-personal machine images.
+Report suspected vulnerabilities through GitHub private vulnerability
+reporting for `h0nda1337/caribeos-xnu-rv32`. Include the affected commit/tag,
+QEMU configuration, minimal reproducer, and serial log. Do not include
+credentials, private keys, proprietary Apple material, or personal machine
+images. If private reporting is unavailable, contact the repository owner
+through the methods listed on their GitHub profile before disclosing details.
+
+Only the latest published preview is reviewed for fixes. The project has no
+security-response SLA and may classify a report as outside the current
+experimental boundary.
 
 The following are outside the current security boundary:
 

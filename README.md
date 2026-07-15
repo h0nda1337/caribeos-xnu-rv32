@@ -19,6 +19,15 @@ The supported boot chain is fixed:
 OpenSBI (M-mode) -> CaribeBootX (S-mode) -> XNU-CaribeOS (S-mode)
 ```
 
+```mermaid
+flowchart LR
+    A["OpenSBI<br/>M-mode"] --> B["CaribeBootX<br/>S-mode"]
+    B --> C["XNU-CaribeOS<br/>S-mode"]
+    C --> D["Linux personality"]
+    D --> E["musl"]
+    E --> F["GNU Bash"]
+```
+
 QEMU must use its OpenSBI firmware and pass CaribeBootX as the kernel:
 
 ```text
@@ -83,6 +92,15 @@ c63fe4bfbaeaf674a4092c1c579cfe472fc433d2e89b4f55307484ed820e595e
 See [docs/TRANCHE_201_EVIDENCE.md](docs/TRANCHE_201_EVIDENCE.md) for the
 evidence boundary and [RESTORE.md](RESTORE.md) for recovery.
 
+## Project Documents
+
+- [Architecture](ARCHITECTURE.md) and [port status](docs/PORT_STATUS.md)
+- [Build](BUILDING.md), [testing](TESTING.md), and [restore](RESTORE.md)
+- [Roadmap](ROADMAP.md), [support](SUPPORT.md), and [security](SECURITY.md)
+- [Contributing](CONTRIBUTING.md) and [code of conduct](CODE_OF_CONDUCT.md)
+- [License review](docs/PUBLIC_LICENSE_REVIEW.md) and [third parties](THIRD_PARTY.md)
+- [Development with Codex](docs/DEVELOPMENT_WITH_CODEX.md) and [citation](CITATION.cff)
+
 ## Reporting Problems
 
 Include the QEMU command, selected `testproject.ps1` mode, kernel SHA-256,
@@ -95,4 +113,5 @@ machine configuration.
 Original XNU files retain their existing notices and the Apple Public Source
 License. CaribeOS additions do not replace or relicense upstream XNU. Review
 [APPLE_LICENSE](APPLE_LICENSE), [NOTICE.md](NOTICE.md), and
-[THIRD_PARTY.md](THIRD_PARTY.md) before redistribution.
+[THIRD_PARTY.md](THIRD_PARTY.md) before redistribution. The technical public
+license review is in [docs/PUBLIC_LICENSE_REVIEW.md](docs/PUBLIC_LICENSE_REVIEW.md).

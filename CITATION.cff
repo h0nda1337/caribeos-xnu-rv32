@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this experimental port, cite the repository and exact commit or tag."
+title: "XNU-CaribeOS RV32IMACSU"
+type: software
+authors:
+  - family-names: "Apolinar"
+    given-names: "Angelo"
+    alias: "h0nda1337"
+repository-code: "https://github.com/h0nda1337/caribeos-xnu-rv32"
+version: "Tranche 201"
+abstract: >-
+  Experimental port of Apple open-source XNU 2050.48.11 to RV32IMACSU,
+  including Sv32, two-hart SMP, a Linux-compatible process personality,
+  musl integration, and interactive GNU Bash through the companion runtime.
+keywords:
+  - XNU
+  - RISC-V
+  - RV32IMACSU
+  - operating systems
+  - kernel
+  - SMP
+  - Sv32
