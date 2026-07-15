@@ -1,3 +1,9 @@
+/*
+ * CARIBEOS MODIFICATION NOTICE
+ * This file was changed from Apple XNU 2050.48.11 for the experimental
+ * CaribeOS RV32IMACSU port on 2026-07-14.
+ */
+
 /* 
  * Mach Operating System
  * Copyright (c) 1990 Carnegie-Mellon University

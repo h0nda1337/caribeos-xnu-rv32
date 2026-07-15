@@ -1,3 +1,10 @@
+/*
+ * CARIBEOS MODIFICATION NOTICE
+ * This file was changed from Apple XNU 2050.48.11 for the experimental
+ * CaribeOS RV32IMACSU port on 2026-07-14.
+ */
+
+#line 1
 /* This is the `system' limits.h, independent of any particular
    compiler.  GCC provides its own limits.h which can be found in
    /usr/lib/gcc, although it is not very informative.  

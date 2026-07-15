@@ -1,3 +1,7 @@
+# CARIBEOS MODIFICATION NOTICE
+# This file was changed from Apple XNU 2050.48.11 for the experimental
+# CaribeOS RV32IMACSU port on 2026-07-14.
+
 export MakeInc_cmd=${SRCROOT}/makedefs/MakeInc.cmd
 export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
 export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
