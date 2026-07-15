@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/h0nda1337/caribeos-xnu-rv32/security/advisories/new
+    about: Report security issues privately through GitHub Security Advisories.
+  - name: Runtime and boot tooling issues
+    url: https://github.com/h0nda1337/caribeos-runtime-rv32/issues
+    about: Report CaribeBootX, image, QEMU runner, and userland issues here.

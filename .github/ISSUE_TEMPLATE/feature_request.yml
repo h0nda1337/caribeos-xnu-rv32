@@ -1,0 +1,33 @@
+name: Feature request
+description: Propose a scoped improvement to the RV32 XNU port.
+title: "[Feature] "
+labels: []
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or missing capability
+      description: Explain the concrete limitation this proposal addresses.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe scope, interfaces, and expected validation gates.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and risk
+      description: Note effects on UP, SMP, ABI, pmap, or the Linux personality.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Scope check
+      options:
+        - label: This request does not claim macOS compatibility or production readiness.
+          required: true

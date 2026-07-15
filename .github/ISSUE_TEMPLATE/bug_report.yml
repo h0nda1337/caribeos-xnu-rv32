@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible kernel, port, build, or test defect.
+title: "[Bug] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        CaribeOS is experimental. Do not include credentials, private logs, or
+        proprietary SDK material.
+  - type: input
+    id: revision
+    attributes:
+      label: Commit or tag
+      description: The exact XNU-CaribeOS revision that exhibits the problem.
+      placeholder: Commit SHA or tranche tag
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Execution mode
+      options:
+        - UP boot
+        - SMP boot
+        - Build or static tooling
+        - Other documented gate
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Include commands, QEMU options, and the earliest failing step.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed result and redacted logs
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I checked the documented limitations and open issues.
+          required: true
+        - label: I removed secrets, personal paths, and proprietary material.
+          required: true
