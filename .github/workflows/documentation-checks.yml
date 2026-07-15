@@ -1,0 +1,47 @@
+name: Documentation checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: documentation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the complete history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate required documentation and local links
+        run: python3 tools/validate-public-tree.py --kind xnu --docs-only
+      - name: Parse YAML metadata and workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby <<'RUBY'
+          require "yaml"
+          require "date"
+
+          files = `git ls-files '*.yml' '*.yaml' 'CITATION.cff'`.lines.map(&:strip)
+          abort "No YAML metadata found" if files.empty?
+          files.each do |path|
+            YAML.safe_load(
+              File.read(path, encoding: "UTF-8"),
+              permitted_classes: [Date],
+              permitted_symbols: [],
+              aliases: false,
+              filename: path
+            )
+            puts "YAML PASS: #{path}"
+          end
+          RUBY
