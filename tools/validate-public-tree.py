@@ -184,6 +184,22 @@ def validate_tree(root: Path, kind: str, tracked: list[str], errors: list[str]) 
         if digest != expected:
             errors.append(f"APPLE_LICENSE normalized SHA-256 changed: {digest}")
 
+        special_mig_shims = {
+            "mach/clock_reply_user.c": "tools/riscv32-mig-shims/clock_reply_user.c",
+            "mach/exc_user.c": "tools/riscv32-mig-shims/exc_user.c",
+            "mach/mach_exc_user.c": "tools/riscv32-mig-shims/mach_exc_user.c",
+            "mach/mach_notify_user.c": "tools/riscv32-mig-shims/mach_notify_user.c",
+        }
+        generator = (root / "tools/riscv32-gen-mig-stubs.ps1").read_text(
+            encoding="utf-8", errors="strict"
+        )
+        tracked_set = set(tracked)
+        for generated, template in special_mig_shims.items():
+            if template not in tracked_set:
+                errors.append(f"tracked RV32 MIG shim template is missing: {template}")
+            if generated not in generator or Path(template).name not in generator:
+                errors.append(f"RV32 MIG shim is disconnected from generator: {generated}")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
