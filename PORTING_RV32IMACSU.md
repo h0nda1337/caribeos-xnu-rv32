@@ -4285,30 +4285,30 @@ Disk note:
 
 Goal:
 
-- Move active development off the nearly full `C:` drive.
+- Move active development to a workspace with sufficient free space.
 
 New active workspace:
 
 ```text
-D:\Codex\2026-05-16\baja-lo-mas-que-se-pueda
+<caribeos-workspace>
 ```
 
 Actions:
 
-- Copied the full project tree from:
+- Copied the full project tree from a previous local workspace.
 
 ```text
-C:\Users\Angelo\Documents\Codex\2026-05-16\baja-lo-mas-que-se-pueda
+<previous-workspace>
 ```
 
-- Regenerated the RV32 osfmk config from the `D:` copy so generated Makefiles
-  use `D:/...` source paths.
-- Rebuilt `pmap.o` and `zalloc.o` from the `D:` copy to verify the generic Mach
+- Regenerated the RV32 osfmk config from the relocated copy so generated
+  Makefiles use the active source paths.
+- Rebuilt `pmap.o` and `zalloc.o` from the relocated copy to verify the generic Mach
   slice still compiles after relocation.
 - Relinked:
 
 ```text
-D:\Codex\2026-05-16\baja-lo-mas-que-se-pueda\xnu-2050.48.11\BUILD\obj\RELEASE_RISCV32\osfmk\RELEASE\xnu-caribeos-rv32-stage0.elf
+<xnu-root>\BUILD\obj\RELEASE_RISCV32\osfmk\RELEASE\xnu-caribeos-rv32-stage0.elf
 ```
 
 - Made CaribeBootX `smoke_sbi` timeout configurable:
@@ -4489,7 +4489,8 @@ file size: 97372 bytes
 Important smoke command:
 
 ```powershell
-$root='D:\Codex\2026-05-16\baja-lo-mas-que-se-pueda'
+$root = $env:CARIBEOS_WORKSPACE
+if (-not $root) { throw 'Set CARIBEOS_WORKSPACE to the workspace root.' }
 $env:PATH="$root\msys64\ucrt64\bin;$root\msys64\usr\bin;$env:PATH"
 $kernel="$root\xnu-2050.48.11\BUILD\obj\RELEASE_RISCV32\osfmk\RELEASE\xnu-caribeos-rv32-stage0.elf"
 Push-Location "$root\caribeos-corrected-xnu-rv32imacsu\caribeos"
@@ -4574,7 +4575,8 @@ Important fixes:
 Build and smoke commands:
 
 ```powershell
-$root='D:\Codex\2026-05-16\baja-lo-mas-que-se-pueda'
+$root = $env:CARIBEOS_WORKSPACE
+if (-not $root) { throw 'Set CARIBEOS_WORKSPACE to the workspace root.' }
 $env:PATH="$root\msys64\ucrt64\bin;$root\msys64\usr\bin;$env:PATH"
 $xnu=Join-Path $root 'xnu-2050.48.11'
 $caribe=Join-Path $root 'caribeos-corrected-xnu-rv32imacsu\caribeos'
@@ -4654,7 +4656,8 @@ Important XNU-side change:
 Repro command after linking the full-stage0 kernel:
 
 ```powershell
-$root='D:\Codex\2026-05-16\baja-lo-mas-que-se-pueda'
+$root = $env:CARIBEOS_WORKSPACE
+if (-not $root) { throw 'Set CARIBEOS_WORKSPACE to the workspace root.' }
 $env:PATH="$root\msys64\ucrt64\bin;$root\msys64\usr\bin;$env:PATH"
 $xnu=Join-Path $root 'xnu-2050.48.11'
 $caribe=Join-Path $root 'caribeos-corrected-xnu-rv32imacsu\caribeos'
@@ -4711,7 +4714,8 @@ Linux `exit_group(0)`.
 Repro command after linking the full-stage0 kernel:
 
 ```powershell
-$root='D:\Codex\2026-05-16\baja-lo-mas-que-se-pueda'
+$root = $env:CARIBEOS_WORKSPACE
+if (-not $root) { throw 'Set CARIBEOS_WORKSPACE to the workspace root.' }
 $env:PATH="$root\msys64\ucrt64\bin;$root\msys64\usr\bin;$env:PATH"
 $xnu=Join-Path $root 'xnu-2050.48.11'
 $caribe=Join-Path $root 'caribeos-corrected-xnu-rv32imacsu\caribeos'
