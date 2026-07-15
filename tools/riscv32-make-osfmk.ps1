@@ -105,6 +105,12 @@ foreach ($candidate in @(
 }
 
 $repoPath = Convert-ToForwardSlashPath $repo
+$canonicalSourceRoot = "/usr/src/caribeos-xnu-rv32"
+$prefixMapFlags = @(
+    "-ffile-prefix-map=$repoPath=$canonicalSourceRoot",
+    "-fmacro-prefix-map=$repoPath=$canonicalSourceRoot",
+    "-fdebug-prefix-map=$repoPath=$canonicalSourceRoot"
+) -join " "
 $makefilePath = Join-Path $obj "Makefile"
 $oldRepoPath = $null
 if (Test-Path -LiteralPath $makefilePath) {
@@ -150,6 +156,7 @@ $vars = @(
     "MACHINE_CONFIG=QEMU_VIRT",
     "MAKEJOBS=-j1",
     "PLATFORM=CaribeOS",
+    "RC_CFLAGS=$prefixMapFlags",
     "CC=riscv64-unknown-elf-gcc",
     "CXX=riscv64-unknown-elf-g++",
     "MIG=true",

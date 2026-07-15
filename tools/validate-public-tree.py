@@ -230,6 +230,20 @@ def validate_tree(root: Path, kind: str, tracked: list[str], errors: list[str]) 
             if generated not in generator or Path(template).name not in generator:
                 errors.append(f"RV32 MIG shim is disconnected from generator: {generated}")
 
+        for script_name in (
+            "tools/riscv32-make-osfmk.ps1",
+            "tools/riscv32-link-full-stage0.ps1",
+        ):
+            script = (root / script_name).read_text(encoding="utf-8", errors="strict")
+            for required in (
+                "/usr/src/caribeos-xnu-rv32",
+                "-ffile-prefix-map=",
+                "-fmacro-prefix-map=",
+                "-fdebug-prefix-map=",
+            ):
+                if required not in script:
+                    errors.append(f"{script_name}: missing reproducible-path flag {required}")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()

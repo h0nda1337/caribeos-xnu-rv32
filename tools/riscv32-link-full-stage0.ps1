@@ -9,6 +9,13 @@ $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $My
 $repo = (Resolve-Path (Join-Path $scriptRoot "..")).Path
 $workspace = Split-Path -Parent $repo
 $build = Join-Path $repo "BUILD\obj\$($Configuration)_RISCV32\osfmk\$Configuration"
+$repoPath = $repo.Replace("\", "/")
+$canonicalSourceRoot = "/usr/src/caribeos-xnu-rv32"
+$prefixMapFlags = @(
+    "-ffile-prefix-map=$repoPath=$canonicalSourceRoot",
+    "-fmacro-prefix-map=$repoPath=$canonicalSourceRoot",
+    "-fdebug-prefix-map=$repoPath=$canonicalSourceRoot"
+)
 $tmp = Join-Path $workspace "tmp"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $env:TMP = $tmp
@@ -50,6 +57,7 @@ $log = Join-Path $build "xnu-caribeos-rv32-full-stage0.log"
 & riscv64-unknown-elf-gcc `
     -march=rv32imac_zicsr_zifencei -mabi=ilp32 `
     -ffreestanding -fno-builtin -fno-stack-protector `
+    @prefixMapFlags `
     -Wall -Wextra -Werror=missing-prototypes `
     -c $shimSrc -o $shimObj
 if ($LASTEXITCODE -ne 0) {
@@ -59,6 +67,7 @@ if ($LASTEXITCODE -ne 0) {
 & riscv64-unknown-elf-gcc `
     -march=rv32imac_zicsr_zifencei -mabi=ilp32 `
     -ffreestanding -fno-builtin -fno-stack-protector `
+    @prefixMapFlags `
     -Wall -Wextra -Wno-missing-prototypes `
     -c $stubSrc -o $stubObj
 if ($LASTEXITCODE -ne 0) {
@@ -68,6 +77,7 @@ if ($LASTEXITCODE -ne 0) {
 & riscv64-unknown-elf-g++ `
     -march=rv32imac_zicsr_zifencei -mabi=ilp32 `
     -ffreestanding -fno-builtin -fno-stack-protector `
+    @prefixMapFlags `
     -fno-exceptions -fno-rtti -fno-use-cxa-atexit `
     -Wall -Wextra `
     -c $iokitProbeSrc -o $iokitProbeObj
