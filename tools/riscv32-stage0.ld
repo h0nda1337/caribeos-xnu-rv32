@@ -30,7 +30,7 @@
  * port of Apple XNU 2050.48.11 on 2026-07-14.
  */
 
-ENTRY(riscv32_kernel_entry)
+ENTRY(riscv32_caribebootx_entry)
 
 PHDRS
 {

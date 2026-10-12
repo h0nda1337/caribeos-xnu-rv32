@@ -87,7 +87,16 @@ typedef struct riscv32_caribebootx_args {
 	uint32_t reserved[12];
 } riscv32_caribebootx_args_t;
 
+/* CaribeSecurity v1: loader evidence, without a hardware trust assertion. */
+typedef struct riscv32_security_evidence {
+	uint32_t magic, version, state, flags;
+	uint32_t cssbi_version, cssbi_caps, verified_images, required_policy;
+	uint8_t kernel_sha256[32], initrd_sha256[32], key_id[32];
+} riscv32_security_evidence_t;
+
 typedef struct riscv32_bootinfo {
+	uint32_t security_evidence_present;
+	riscv32_security_evidence_t security_evidence;
 	uint32_t hartid;
 	uint32_t cpu_count;
 	uint32_t hart_ids[RISCV32_FDT_MAX_CPUS];
@@ -166,6 +175,7 @@ void riscv32_bootinfo_ack_loader(
     const riscv32_caribebootx_args_t *loader_args);
 void riscv32_kernel_entry(uint32_t hartid, uintptr_t dtb,
     const riscv32_caribebootx_args_t *loader_args);
+void riscv32_caribebootx_entry(void) __attribute__((noreturn));
 const riscv32_bootinfo_t *riscv32_bootinfo(void);
 boot_args *riscv32_boot_args(void);
 boolean_t riscv32_boot_arg_has(const char *needle);

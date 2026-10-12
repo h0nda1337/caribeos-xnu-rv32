@@ -697,6 +697,28 @@ riscv32_bootinfo_init(uint32_t hartid, uintptr_t dtb,
 	}
 	riscv32_bootinfo_store.cpu_capabilities =
 	    riscv32_bootinfo_build_cpu_capabilities();
+	if (have_loader && loader_args->reserved[8] == 0x31534543U &&
+	    loader_args->reserved[10] == sizeof(riscv32_security_evidence_t) &&
+	    loader_args->reserved[11] == 1U) {
+		uint32_t addr = loader_args->reserved[9];
+		uint64_t end = (uint64_t)addr + sizeof(riscv32_security_evidence_t);
+		uint64_t ram_end = (uint64_t)riscv32_bootinfo_store.mem_base +
+		    riscv32_bootinfo_store.mem_size;
+		/* The evidence must be in the loader slot, before the kernel. */
+		if ((addr & 3U) == 0 && addr >= 0x80200000U &&
+		    end <= riscv32_bootinfo_store.kernel_base && end <= ram_end) {
+			const riscv32_security_evidence_t *e =
+			    (const riscv32_security_evidence_t *)(uintptr_t)addr;
+			if (e->magic == 0x31534543U && e->version == 1U) {
+				memcpy(&riscv32_bootinfo_store.security_evidence,
+				    e, sizeof(*e));
+				riscv32_bootinfo_store.security_evidence_present = 1U;
+				/* Loader/firmware claims cannot authenticate the root. */
+				riscv32_bootinfo_store.security_evidence.state = 2U;
+				riscv32_bootinfo_store.security_evidence.flags |= 0x200U;
+			}
+		}
+	}
 
 	riscv32_pmap_set_phys_window(riscv32_bootinfo_store.mem_base,
 	    riscv32_bootinfo_store.mem_base, riscv32_bootinfo_store.mem_size);

@@ -231,6 +231,14 @@ riscv32_print_boot_report(void)
 	riscv32_early_puthex32(bootinfo->bootloader_flags);
 	riscv32_early_puts(" ack=0x");
 	riscv32_early_puthex32(RISCV32_CARIBEBOOTX_ACK_MAGIC);
+	if (bootinfo->security_evidence_present) {
+		riscv32_early_puts("\n[boot-report] CaribeSecurity ORANGE root-unverified cssbi=0x");
+		riscv32_early_puthex32(bootinfo->security_evidence.cssbi_version);
+		riscv32_early_puts(" reported-verified-images=0x");
+		riscv32_early_puthex32(bootinfo->security_evidence.verified_images);
+		riscv32_early_puts(" required-policy=");
+		riscv32_early_putdec(bootinfo->security_evidence.required_policy);
+	}
 	riscv32_early_puts("\n[boot-report] cpu hart=");
 	riscv32_early_putdec(bootinfo->hartid);
 	riscv32_early_puts(" harts=");
@@ -319,6 +327,22 @@ int
 cpu_number(void)
 {
 	return get_cpu_number();
+}
+
+/* The FDT walker alone exceeds CBX's 16 KiB loader stack. */
+static uint8_t riscv32_boot_entry_stack[65536]
+    __attribute__((aligned(16), used));
+
+void __attribute__((naked, noreturn))
+riscv32_caribebootx_entry(void)
+{
+	__asm__ volatile(
+	    "csrci sstatus, 2\n"
+	    "csrw sie, zero\n"
+	    "la sp, riscv32_boot_entry_stack\n"
+	    "li t0, 65536\n"
+	    "add sp, sp, t0\n"
+	    "j riscv32_kernel_entry\n");
 }
 
 void
