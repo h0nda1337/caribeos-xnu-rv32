@@ -120,7 +120,18 @@ if (Test-Path -LiteralPath $makefilePath) {
     }
 }
 
-if (-not $oldRepoPath -or $oldRepoPath -ne $repoPath) {
+$configInputs = @("osfmk/conf/files.riscv32", "osfmk/conf/MASTER", "osfmk/conf/MASTER.riscv32")
+$configChanged = $false
+if (Test-Path -LiteralPath $makefilePath) {
+    $generatedAt = (Get-Item -LiteralPath $makefilePath).LastWriteTimeUtc
+    foreach ($inputFile in $configInputs) {
+        $path = Join-Path $repo $inputFile
+        if ((Test-Path -LiteralPath $path) -and (Get-Item -LiteralPath $path).LastWriteTimeUtc -gt $generatedAt) {
+            $configChanged = $true
+        }
+    }
+}
+if (-not $oldRepoPath -or $oldRepoPath -ne $repoPath -or $configChanged) {
     & (Join-Path $scriptRoot "riscv32-gen-config.ps1")
 }
 $candidateOldPaths = @($oldRepoPath)

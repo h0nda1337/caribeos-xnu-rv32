@@ -28,6 +28,7 @@
  * CARIBEOS MODIFICATION NOTICE
  * This file was created as part of the experimental CaribeOS RV32IMACSU
  * port of Apple XNU 2050.48.11 on 2026-07-14.
+ * 2026-10-12: declare ownership-backed private mapping lifecycle interfaces.
  */
 
 #line 1
@@ -231,6 +232,10 @@ void riscv32_linux_exec_gate3_release_process_resources(
     struct riscv32_linux_process *process);
 void riscv32_linux_exec_get_user_backing_stats(
     riscv32_linux_user_backing_stats_t *stats);
+boolean_t riscv32_linux_exec_map_private_page(struct pmap *pmap,
+    uint32_t vaddr, const void *contents, uint32_t prot);
+void riscv32_linux_exec_unmap_private_page(struct pmap *pmap,
+    uint32_t vaddr);
 void riscv32_linux_exec_get_arena_stats(
     riscv32_linux_exec_arena_stats_t *stats);
 void riscv32_linux_exec_get_transaction_stats(

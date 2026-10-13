@@ -28,6 +28,7 @@
  * CARIBEOS MODIFICATION NOTICE
  * This file was created as part of the experimental CaribeOS RV32IMACSU
  * port of Apple XNU 2050.48.11 on 2026-07-14.
+ * 2026-10-12: private VM page ownership and exact lifecycle gate accounting.
  */
 
 #line 1
@@ -192,6 +193,7 @@ static uint32_t riscv32_linux_gate5_pt_pages_per_fork;
 static uint32_t riscv32_linux_gate5_exec_pt_pages;
 static uint32_t riscv32_linux_gate5_child_status;
 static uint32_t riscv32_linux_gate5_child_closed_fds;
+static uint32_t riscv32_linux_gate5_child_closed_pipe_endpoints;
 static uint32_t riscv32_linux_gate5_child_live_pipes_before;
 static uint32_t riscv32_linux_gate5_child_live_pipes_after;
 static uint32_t riscv32_linux_gate5_child_flags;
@@ -343,6 +345,8 @@ static volatile uint32_t riscv32_linux_gate14_exits;
 static volatile uint32_t riscv32_linux_gate14_reaps;
 static volatile uint32_t riscv32_linux_gate14_errors;
 static uint32_t riscv32_linux_gate14_pages_per_fork;
+/* gate14_worker.S maps and unmaps exactly one private page after exec. */
+#define RISCV32_LINUX_GATE14_WORKER_MMAP_PAGES 1U
 static uint32_t riscv32_linux_gate14_baseline_valid;
 static uint32_t riscv32_linux_gate14_ofd_rate_valid;
 static uint32_t riscv32_linux_gate14_ofd_retains_per_cycle;
@@ -1473,6 +1477,56 @@ riscv32_linux_exec_get_user_backing_stats(
 	simple_unlock(&riscv32_linux_user_backing_lock);
 }
 
+boolean_t
+riscv32_linux_exec_map_private_page(pmap_t pmap, uint32_t vaddr,
+    const void *contents, uint32_t prot)
+{
+	riscv32_linux_process_t *process = riscv32_linux_process_current();
+	addr64_t source;
+	ppnum_t destination;
+	if (process == (riscv32_linux_process_t *)0 || process->pmap != pmap ||
+	    contents == (const void *)0 || (vaddr & (PAGE_SIZE - 1U)) != 0U ||
+	    pmap_extract(pmap, vaddr) != 0U) return FALSE;
+	source = riscv32_kva_to_phys((vm_offset_t)(uintptr_t)contents);
+	if (source == 0U || (source & (PAGE_SIZE - 1U)) != 0U) return FALSE;
+	if (riscv32_linux_gate4_clone_page(process, vaddr,
+	    (ppnum_t)(source >> PAGE_SHIFT), (vm_prot_t)prot,
+	    &destination) != KERN_SUCCESS) return FALSE;
+	pmap_enter(pmap, vaddr, destination, (vm_prot_t)prot,
+	    (vm_prot_t)prot, 0, TRUE);
+	if ((pmap_extract(pmap, vaddr) >> PAGE_SHIFT) != destination) {
+		uint32_t id = process->owned_user_page_ids[--process->owned_user_page_count];
+		process->owned_user_page_ids[process->owned_user_page_count] = 0U;
+		riscv32_linux_user_backing_release_index(id - 1U, process->pid);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+void
+riscv32_linux_exec_unmap_private_page(pmap_t pmap, uint32_t vaddr)
+{
+	riscv32_linux_process_t *process = riscv32_linux_process_current();
+	addr64_t physical;
+	uint32_t i;
+	if (process == (riscv32_linux_process_t *)0 || process->pmap != pmap) return;
+	physical = pmap_extract(pmap, vaddr);
+	if (physical == 0U) return;
+	for (i = 0U; i < process->owned_user_page_count; i++) {
+		uint32_t id = process->owned_user_page_ids[i];
+		addr64_t owned = riscv32_kva_to_phys((vm_offset_t)(uintptr_t)
+		    riscv32_linux_user_backing_pages[id - 1U]);
+		if (owned != physical) continue;
+		/* Invalidate locally/remotely before zeroing or recycling the backing. */
+		pmap_remove(pmap, vaddr, vaddr + PAGE_SIZE);
+		process->owned_user_page_ids[i] =
+		    process->owned_user_page_ids[--process->owned_user_page_count];
+		process->owned_user_page_ids[process->owned_user_page_count] = 0U;
+		riscv32_linux_user_backing_release_index(id - 1U, process->pid);
+		return;
+	}
+}
+
 uint32_t
 riscv32_linux_gate14_stress_rounds(void)
 {
@@ -1792,7 +1846,8 @@ riscv32_linux_gate14_snapshot_matches(
 	    &riscv32_linux_gate14_baseline;
 	uint32_t completed_after_baseline = cycle - 1U;
 	uint32_t backing_pages = completed_after_baseline *
-	    riscv32_linux_gate14_pages_per_fork;
+	    (riscv32_linux_gate14_pages_per_fork +
+	    RISCV32_LINUX_GATE14_WORKER_MMAP_PAGES);
 	uint32_t pt_allocations;
 	uint32_t pt_frees;
 	uint32_t kernel_pt_growth;
@@ -1971,7 +2026,8 @@ riscv32_linux_gate14_dump_snapshot(
 	riscv32_early_putdec(current->backing.total_frees -
 	    base->backing.total_frees);
 	riscv32_early_puts(" expected=");
-	riscv32_early_putdec(expected * riscv32_linux_gate14_pages_per_fork);
+	riscv32_early_putdec(expected * (riscv32_linux_gate14_pages_per_fork +
+	    RISCV32_LINUX_GATE14_WORKER_MMAP_PAGES));
 	riscv32_early_puts("\n");
 
 	riscv32_early_puts("[process-gate-14-stress] DRIFT ofd live/refs=");
@@ -2198,10 +2254,12 @@ riscv32_linux_gate14_note_reap(uint32_t cycle, uint32_t stage,
 		riscv32_early_putdec((rounds - 1U) * 2U);
 		riscv32_early_puts(" backing-alloc/free=");
 		riscv32_early_putdec((rounds - 1U) *
-		    riscv32_linux_gate14_pages_per_fork);
+		    (riscv32_linux_gate14_pages_per_fork +
+		    RISCV32_LINUX_GATE14_WORKER_MMAP_PAGES));
 		riscv32_early_puts("/");
 		riscv32_early_putdec((rounds - 1U) *
-		    riscv32_linux_gate14_pages_per_fork);
+		    (riscv32_linux_gate14_pages_per_fork +
+		    RISCV32_LINUX_GATE14_WORKER_MMAP_PAGES));
 		riscv32_early_puts(" zombies=0 PASS\n");
 		riscv32_early_puts(
 		    "[process-gate-14-stress] ofd-retain/release=");
@@ -2893,6 +2951,8 @@ riscv32_linux_exec_release_process_resources(
 		riscv32_linux_gate5_child_status = process->exit_status;
 		riscv32_linux_gate5_child_closed_fds =
 		    process->exit_resources.closed_fds;
+		riscv32_linux_gate5_child_closed_pipe_endpoints =
+		    process->exit_resources.pipe_endpoints_closed;
 		riscv32_linux_gate5_child_live_pipes_before =
 		    process->exit_resources.live_pipes_before;
 		riscv32_linux_gate5_child_live_pipes_after =
@@ -3744,6 +3804,8 @@ riscv32_linux_process_gate5(riscv32_linux_process_t *pid1)
 	riscv32_linux_user_backing_stats_t backing_after;
 	riscv32_linux_ofd_stats_t ofd_before;
 	riscv32_linux_ofd_stats_t ofd_after;
+	riscv32_linux_pipe_stats_t pipes_before;
+	riscv32_linux_pipe_stats_t pipes_after;
 	riscv32_linux_exec_arena_stats_t arena_before;
 	riscv32_linux_exec_arena_stats_t arena_after;
 	kern_return_t kr;
@@ -3769,6 +3831,7 @@ riscv32_linux_process_gate5(riscv32_linux_process_t *pid1)
 	riscv32_linux_gate5_exec_pt_pages = 0U;
 	riscv32_linux_gate5_child_status = UINT32_MAX;
 	riscv32_linux_gate5_child_closed_fds = 0U;
+	riscv32_linux_gate5_child_closed_pipe_endpoints = 0U;
 	riscv32_linux_gate5_child_live_pipes_before = UINT32_MAX;
 	riscv32_linux_gate5_child_live_pipes_after = UINT32_MAX;
 	riscv32_linux_gate5_child_flags = 0U;
@@ -3779,11 +3842,12 @@ riscv32_linux_process_gate5(riscv32_linux_process_t *pid1)
 	riscv32_pmap_get_lifecycle_stats(&pmap_before);
 	riscv32_linux_exec_get_user_backing_stats(&backing_before);
 	riscv32_linux_syscall_get_ofd_stats(&ofd_before);
+	riscv32_linux_syscall_get_pipe_stats(&pipes_before);
 	riscv32_linux_exec_get_arena_stats(&arena_before);
 	tasks_before = tasks_count;
 	threads_before = threads_count;
-	if (backing_before.in_use_pages != 0U) {
-		riscv32_linux_gate5_panic("user backing pool was not at baseline");
+	if (backing_before.in_use_pages != 0U || pipes_before.in_use != 0U) {
+		riscv32_linux_gate5_panic("user backing or pipe pool was not at baseline");
 	}
 
 	if (!riscv32_linux_exec_create_static_process(pid1, 2U,
@@ -3846,6 +3910,7 @@ riscv32_linux_process_gate5(riscv32_linux_process_t *pid1)
 	riscv32_pmap_get_lifecycle_stats(&pmap_after);
 	riscv32_linux_exec_get_user_backing_stats(&backing_after);
 	riscv32_linux_syscall_get_ofd_stats(&ofd_after);
+	riscv32_linux_syscall_get_pipe_stats(&pipes_after);
 	riscv32_linux_exec_get_arena_stats(&arena_after);
 	expected_pt_frees = parent_owned_pt_pages +
 	    riscv32_linux_gate5_pt_pages_per_fork +
@@ -3862,8 +3927,10 @@ riscv32_linux_process_gate5(riscv32_linux_process_t *pid1)
 	    riscv32_linux_gate5_exec_pt_pages < 3U ||
 	    riscv32_linux_gate5_child_status != 21U ||
 	    riscv32_linux_gate5_child_closed_fds != 3U ||
-	    riscv32_linux_gate5_child_live_pipes_before != 0U ||
-	    riscv32_linux_gate5_child_live_pipes_after != 0U ||
+	    riscv32_linux_gate5_child_closed_pipe_endpoints != 0U ||
+	    /* The parent's endpoints may still own the one pipe when the child exits. */
+	    riscv32_linux_gate5_child_live_pipes_before > 1U ||
+	    riscv32_linux_gate5_child_live_pipes_after > 1U ||
 	    riscv32_linux_gate5_child_exec_verified != 1U ||
 	    (riscv32_linux_gate5_child_flags &
 	    (RISCV32_LINUX_PROCESS_FLAG_GATE5_CHILD |
@@ -3877,6 +3944,11 @@ riscv32_linux_process_gate5(riscv32_linux_process_t *pid1)
 	    riscv32_linux_gate5_pages_per_fork ||
 	    ofd_after.in_use != ofd_before.in_use ||
 	    ofd_after.references != ofd_before.references ||
+	    pipes_after.in_use != pipes_before.in_use ||
+	    pipes_after.total_allocations != pipes_before.total_allocations + 1U ||
+	    pipes_after.total_releases != pipes_before.total_releases + 1U ||
+	    pipes_after.bytes_read != pipes_before.bytes_read + 4U ||
+	    pipes_after.bytes_written != pipes_before.bytes_written + 4U ||
 	    ofd_after.total_allocations != ofd_before.total_allocations + 6U ||
 	    ofd_after.total_frees != ofd_before.total_frees + 6U ||
 	    ofd_after.total_retains != ofd_before.total_retains + 6U ||
@@ -3900,8 +3972,29 @@ riscv32_linux_process_gate5(riscv32_linux_process_t *pid1)
 	    process_after_exit.total_created != process_before.total_created + 2U ||
 	    process_after_exit.total_exited != process_before.total_exited + 2U ||
 	    process_after_exit.total_reaped != process_before.total_reaped + 1U) {
-		riscv32_linux_gate5_panic(
-		    "fd/OFD, VM, task or process counters did not return");
+		panic("riscv32: Gate 5 resource drift tasks=%u/%u threads=%u/%u "
+		    "user-pmaps=%u/%u pt-pool=%u/%u kernel-pt=%u/%u pt-frees=%u/%u "
+		    "backing-live=%u/%u backing-alloc/free=%u/%u expected=%u "
+		    "ofd-live/refs=%u/%u base=%u/%u ofd-deltas=%u/%u/%u/%u "
+		    "arena-live=%u/%u arena-deltas=%u/%u/%u",
+		    tasks_count, tasks_before, threads_count, threads_before,
+		    pmap_after.live_user_pmaps, pmap_before.live_user_pmaps,
+		    pmap_after.arena_in_use_pages, pmap_before.arena_in_use_pages,
+		    pmap_after.kernel_owned_pt_pages, pmap_before.kernel_owned_pt_pages,
+		    pt_pages_freed, expected_pt_frees,
+		    backing_after.in_use_pages, backing_before.in_use_pages,
+		    backing_after.total_allocations - backing_before.total_allocations,
+		    backing_after.total_frees - backing_before.total_frees,
+		    riscv32_linux_gate5_pages_per_fork,
+		    ofd_after.in_use, ofd_after.references, ofd_before.in_use, ofd_before.references,
+		    ofd_after.total_allocations - ofd_before.total_allocations,
+		    ofd_after.total_frees - ofd_before.total_frees,
+		    ofd_after.total_retains - ofd_before.total_retains,
+		    ofd_after.total_releases - ofd_before.total_releases,
+		    arena_after.in_use, arena_before.in_use,
+		    arena_after.total_allocations - arena_before.total_allocations,
+		    arena_after.total_reuses - arena_before.total_reuses,
+		    arena_after.total_frees - arena_before.total_frees);
 	}
 	riscv32_early_puts(
 	    "[process-gate-5] shared offset, independent close, CLOEXEC and inherited pipe PASS\n");

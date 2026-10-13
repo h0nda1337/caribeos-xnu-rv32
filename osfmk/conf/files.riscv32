@@ -1,5 +1,6 @@
 #
 # Experimental RISC-V 32-bit support files.
+# CARIBEOS MODIFICATION NOTICE: 2026-10-12, add the native graphics driver.
 #
 
 osfmk/riscv32/bootstrap.c	standard
@@ -39,3 +40,4 @@ osfmk/riscv32/umode_smoke.c	standard
 osfmk/riscv32/umode_smoke_payload.s	standard
 osfmk/riscv32/virtio_blk.c	standard
 osfmk/riscv32/virtio_mmio.c	standard
+osfmk/riscv32/graphics.c	standard

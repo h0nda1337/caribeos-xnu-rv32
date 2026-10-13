@@ -28,12 +28,15 @@
  * CARIBEOS MODIFICATION NOTICE
  * This file was created as part of the experimental CaribeOS RV32IMACSU
  * port of Apple XNU 2050.48.11 on 2026-07-14.
+ * 2026-10-12: native graphics ioctls and isolated managed brk/mmap backing.
+ * Cross-hart clone/wait records and user console chunks use atomic writes.
  */
 
 #line 1
 #include <machine/linux_syscall.h>
 #include <machine/bootinfo.h>
 #include <machine/copyio.h>
+#include <machine/graphics.h>
 #include <machine/cpu_data.h>
 #include <machine/early_print.h>
 #include <machine/linux_exec.h>
@@ -44,6 +47,7 @@
 #include <machine/tty.h>
 #include <mach/mach_time.h>
 #include <kern/clock.h>
+#include <kern/misc_protos.h>
 #include <kern/processor.h>
 #include <kern/sched_prim.h>
 #include <kern/task.h>
@@ -278,6 +282,8 @@
 #define RISCV32_LINUX_FD_PROC_UPTIME 25U
 #define RISCV32_LINUX_FD_PROC_STAT 26U
 #define RISCV32_LINUX_FD_NULL	27U
+#define RISCV32_LINUX_FD_GRAPHICS 30U
+#define RISCV32_LINUX_ENODEV 19U
 #define RISCV32_LINUX_FD_PROC_SELF_FDINFO 28U
 #define RISCV32_LINUX_FD_PROC_CARIBE_RESOURCES 29U
 #define RISCV32_IOKIT_STAGE0_CPP_DEFERRED 0x00000008U
@@ -521,6 +527,7 @@ static volatile uint32_t
 static simple_lock_data_t riscv32_linux_ofd_locks[RISCV32_LINUX_OFD_MAX];
 static decl_simple_lock_data(, riscv32_linux_ofd_pool_lock)
 static volatile uint32_t riscv32_linux_ofd_init_state;
+static decl_simple_lock_data(, riscv32_linux_vm_scratch_lock)
 static riscv32_linux_ofd_stats_t riscv32_linux_ofd_stats;
 static uint8_t riscv32_linux_mmap_pages[RISCV32_LINUX_MMAP_MAX_PAGES]
     [RISCV32_LINUX_MMAP_PAGE_SIZE]
@@ -693,6 +700,7 @@ riscv32_linux_ofd_init(void)
 	    0U, 1U)) {
 		simple_lock_init(&riscv32_linux_ofd_pool_lock, 0);
 		simple_lock_init(&riscv32_linux_pipe_pool_lock, 0);
+		simple_lock_init(&riscv32_linux_vm_scratch_lock, 0);
 		riscv32_linux_zero(riscv32_linux_pipes,
 		    sizeof(riscv32_linux_pipes));
 		riscv32_linux_zero(riscv32_linux_ofd_pool,
@@ -4237,6 +4245,10 @@ riscv32_linux_enter_static_page(pmap_t pmap, uint32_t vaddr, uint8_t *page,
 	if (pmap == PMAP_NULL || page == (uint8_t *)0) {
 		return FALSE;
 	}
+	if (riscv32_linux_process_current() != (riscv32_linux_process_t *)0) {
+		return riscv32_linux_exec_map_private_page(pmap, vaddr, page,
+		    (uint32_t)prot);
+	}
 	phys = riscv32_kva_to_phys((vm_offset_t)(uintptr_t)page);
 	if (phys == 0) {
 		return FALSE;
@@ -4250,8 +4262,13 @@ static boolean_t
 riscv32_linux_map_static_page(pmap_t pmap, uint32_t vaddr, uint8_t *page,
     vm_prot_t prot)
 {
+	boolean_t result;
+	riscv32_linux_ofd_init();
+	simple_lock(&riscv32_linux_vm_scratch_lock);
 	riscv32_linux_zero(page, RISCV32_LINUX_MMAP_PAGE_SIZE);
-	return riscv32_linux_enter_static_page(pmap, vaddr, page, prot);
+	result = riscv32_linux_enter_static_page(pmap, vaddr, page, prot);
+	simple_unlock(&riscv32_linux_vm_scratch_lock);
+	return result;
 }
 
 static uint32_t
@@ -4297,7 +4314,6 @@ riscv32_linux_write_user_bytes(uint32_t user_buf, uint32_t count,
     uint32_t *copied_out)
 {
 	char chunk[RISCV32_LINUX_WRITE_CHUNK];
-	uint32_t i;
 	uint32_t copied;
 	uint32_t chunk_len;
 
@@ -4315,9 +4331,7 @@ riscv32_linux_write_user_bytes(uint32_t user_buf, uint32_t count,
 		if (riscv32_copyin(user_buf + copied, chunk, chunk_len) != 0) {
 			return FALSE;
 		}
-		for (i = 0; i < chunk_len; i++) {
-			riscv32_early_putc(chunk[i]);
-		}
+		riscv32_early_write(chunk, chunk_len);
 		if (copied_out != (uint32_t *)0) {
 			*copied_out = copied + chunk_len;
 		}
@@ -4877,6 +4891,25 @@ riscv32_linux_sys_openat(riscv_saved_state_t *state)
 	}
 	riscv32_linux_resolve_path_at(dirfd, raw_path, path, sizeof(path));
 
+	if (riscv32_linux_streq(path, "/dev/caribe-graphics")) {
+		if ((flags & ~(RISCV32_LINUX_O_ACCMODE | RISCV32_LINUX_O_CLOEXEC |
+		    RISCV32_LINUX_O_NONBLOCK | 0x8000U)) != 0 || accmode != RISCV32_LINUX_O_RDWR) {
+			riscv32_linux_return_errno(state, RISCV32_LINUX_EINVAL);
+			return TRUE;
+		}
+		if (!riscv32_graphics_available()) {
+			riscv32_linux_return_errno(state, RISCV32_LINUX_ENODEV);
+			return TRUE;
+		}
+		if (!riscv32_linux_fd_alloc(RISCV32_LINUX_FD_GRAPHICS,
+		    accmode, (const riscv32_linux_initrd_file_t *)0, &fd)) {
+			riscv32_linux_return_errno(state, RISCV32_LINUX_EMFILE);
+			return TRUE;
+		}
+		riscv32_linux_fd_set_open_flags(fd, flags);
+		riscv32_linux_return_value(state, fd);
+		return TRUE;
+	}
 	if (riscv32_linux_streq(path, "/dev/console") ||
 	    riscv32_linux_streq(path, "/dev/tty")) {
 		if (!riscv32_linux_fd_alloc(RISCV32_LINUX_FD_CONSOLE,
@@ -6950,6 +6983,12 @@ riscv32_linux_sys_ioctl(riscv_saved_state_t *state)
 		riscv32_linux_return_errno(state, RISCV32_LINUX_EBADF);
 		return TRUE;
 	}
+	if (source.kind == RISCV32_LINUX_FD_GRAPHICS) {
+		uint32_t gfx_error = (uint32_t)riscv32_graphics_ioctl(request, arg);
+		if (gfx_error != 0U) riscv32_linux_return_errno(state, gfx_error);
+		else riscv32_linux_return_value(state, 0);
+		return TRUE;
+	}
 	if (source.kind != RISCV32_LINUX_FD_CONSOLE) {
 		riscv32_linux_return_errno(state, RISCV32_LINUX_ENOTTY);
 		return TRUE;
@@ -8734,6 +8773,9 @@ riscv32_linux_mmap_unmap_range(pmap_t pmap, uint32_t addr, uint32_t len)
 	uint32_t end = addr + len;
 	uint32_t vaddr;
 
+	for (vaddr = addr; vaddr < end; vaddr += RISCV32_LINUX_MMAP_PAGE_SIZE) {
+		riscv32_linux_exec_unmap_private_page(pmap, vaddr);
+	}
 	if (pmap != PMAP_NULL) {
 		pmap_remove(pmap, addr, end);
 	}
@@ -8798,11 +8840,16 @@ riscv32_linux_mmap_load_range(pmap_t pmap, uint32_t vaddr,
 		uint32_t page_file_offset = file_offset +
 		    page * RISCV32_LINUX_MMAP_PAGE_SIZE;
 		int slot = slots[page];
+		boolean_t prepared;
 
-		if (!riscv32_linux_mmap_prepare_page(
-		    riscv32_linux_mmap_pages[slot], file, page_file_offset) ||
-		    !riscv32_linux_enter_static_page(pmap, page_vaddr,
-		    riscv32_linux_mmap_pages[slot], prot)) {
+		riscv32_linux_ofd_init();
+		simple_lock(&riscv32_linux_vm_scratch_lock);
+		prepared = riscv32_linux_mmap_prepare_page(
+		    riscv32_linux_mmap_pages[slot], file, page_file_offset);
+		if (prepared) prepared = riscv32_linux_enter_static_page(pmap, page_vaddr,
+		    riscv32_linux_mmap_pages[slot], prot);
+		simple_unlock(&riscv32_linux_vm_scratch_lock);
+		if (!prepared) {
 			goto fail;
 		}
 		riscv32_linux_mmap_record_page((uint32_t)slot, page_vaddr,
@@ -8818,10 +8865,8 @@ fail:
 			    sizeof(riscv32_linux_mmap_page_info[slots[page]]));
 		}
 	}
-	if (pmap != PMAP_NULL) {
-		pmap_remove(pmap, vaddr,
-		    vaddr + page_count * RISCV32_LINUX_MMAP_PAGE_SIZE);
-	}
+	riscv32_linux_mmap_unmap_range(pmap, vaddr,
+	    page_count * RISCV32_LINUX_MMAP_PAGE_SIZE);
 	return FALSE;
 }
 
@@ -9922,12 +9967,12 @@ riscv32_linux_sys_clone(riscv_saved_state_t *state)
 	    !(riscv32_linux_gate14_stress_enabled() &&
 	    (parent->pid == 2U || (parent->flags &
 	    RISCV32_LINUX_PROCESS_FLAG_GATE14_DRIVER) != 0U))) {
-		riscv32_early_puts("[linux-clone] real task/thread child pid=");
-		riscv32_early_putdec(pid);
-		riscv32_early_puts(" parent=");
-		riscv32_early_putdec(parent->pid);
-		riscv32_early_puts(riscv32_boot_arg_has("process-gate-14") &&
-		    parent->pid == 2U ? " affinity=cpu1\n" : " affinity=cpu0\n");
+		char record[128];
+		(void)snprintf(record, sizeof(record),
+		    "[linux-clone] real task/thread child pid=%u parent=%u affinity=cpu%u\n",
+		    pid, parent->pid, riscv32_boot_arg_has("process-gate-14") &&
+		    parent->pid == 2U ? 1U : 0U);
+		riscv32_early_puts(record);
 	}
 	if (riscv32_boot_arg_has("process-gate-11") &&
 	    !riscv32_boot_arg_has("process-gate-14") && parent->pid == 2U) {
@@ -10039,13 +10084,11 @@ riscv32_linux_sys_wait4_real(riscv_saved_state_t *state,
 		}
 		if (!announced) {
 			if (verbose_wait) {
-				riscv32_early_puts("[linux-wait] parent=");
-				riscv32_early_putdec(parent->pid);
-				riscv32_early_puts(" blocking selector=");
-				riscv32_early_putdec((uint32_t)selector);
-				riscv32_early_puts(" id=");
-				riscv32_early_putdec(id);
-				riscv32_early_puts(" without polling\n");
+				char record[128];
+				(void)snprintf(record, sizeof(record),
+				    "[linux-wait] parent=%u blocking selector=%u id=%u without polling\n",
+				    parent->pid, (uint32_t)selector, id);
+				riscv32_early_puts(record);
 			}
 			announced = TRUE;
 		}
@@ -10281,13 +10324,11 @@ riscv32_linux_sys_waitid(riscv_saved_state_t *state)
 		}
 		if (!announced) {
 			if (verbose_wait) {
-				riscv32_early_puts("[linux-waitid] parent=");
-				riscv32_early_putdec(parent->pid);
-				riscv32_early_puts(" blocking selector=");
-				riscv32_early_putdec((uint32_t)selector);
-				riscv32_early_puts(" id=");
-				riscv32_early_putdec(id);
-				riscv32_early_puts(" without polling\n");
+				char record[128];
+				(void)snprintf(record, sizeof(record),
+				    "[linux-waitid] parent=%u blocking selector=%u id=%u without polling\n",
+				    parent->pid, (uint32_t)selector, id);
+				riscv32_early_puts(record);
 			}
 			announced = TRUE;
 		}

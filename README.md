@@ -19,6 +19,11 @@ gates.
 The badges above report the public static and documentation checks. They do not
 represent a full kernel build or the preserved long-form boot suites.
 
+The separate `develop/graphics-v0.1` branch adds a native virtio GPU/input
+backend and corrects private userspace brk/mmap backing. See
+[graphics development](docs/GRAPHICS_V0_1.md). Syllable component rendering
+lives in the runtime; no Linux kernel, Wayland server or X11 server is added.
+
 ## Boot Contract
 
 The supported boot chain is fixed:

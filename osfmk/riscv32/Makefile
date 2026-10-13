@@ -27,6 +27,7 @@
 # CARIBEOS MODIFICATION NOTICE
 # This file was created as part of the experimental CaribeOS RV32IMACSU
 # port of Apple XNU 2050.48.11 on 2026-07-14.
+# 2026-10-12: export the native graphics device ABI header.
 
 export MakeInc_cmd=${SRCROOT}/makedefs/MakeInc.cmd
 export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
@@ -85,6 +86,7 @@ DATAFILES = \
 	user_exception.h \
 	virtio_blk.h \
 	virtio_mmio.h \
+	graphics.h \
 	vm_tuning.h \
 	xpr.h
 

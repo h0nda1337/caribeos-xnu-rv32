@@ -28,6 +28,7 @@
  * CARIBEOS MODIFICATION NOTICE
  * This file was created as part of the experimental CaribeOS RV32IMACSU
  * port of Apple XNU 2050.48.11 on 2026-07-14.
+ * 2026-10-12: serialize bounded console writes across harts.
  */
 
 #line 1
@@ -37,6 +38,7 @@
 #include <stdint.h>
 
 void riscv32_early_putc(char c);
+void riscv32_early_write(const char *bytes, uint32_t count);
 void riscv32_early_puts(const char *str);
 void riscv32_early_puthex32(uint32_t value);
 void riscv32_early_putdec(uint32_t value);

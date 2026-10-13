@@ -28,6 +28,7 @@
  * CARIBEOS MODIFICATION NOTICE
  * This file was created as part of the experimental CaribeOS RV32IMACSU
  * port of Apple XNU 2050.48.11 on 2026-07-14.
+ * 2026-10-12: emit cross-hart user-entry records atomically.
  */
 
 #line 1
@@ -35,6 +36,7 @@
 #include <mach/thread_status.h>
 #include <kern/debug.h>
 #include <kern/kalloc.h>
+#include <kern/misc_protos.h>
 #include <kern/task.h>
 #include <kern/thread.h>
 #include <machine/cpu_data.h>
@@ -452,20 +454,23 @@ thread_bootstrap_return(void)
 			    cpu, process->affinity_cpu, active_mask);
 		}
 		if (riscv32_linux_gate14_should_log_process(process)) {
-			riscv32_early_puts("[process-gate-14] child pid=");
-			riscv32_early_putdec(process->pid);
-			riscv32_early_puts(" entered U-mode cpu=1 active-pmap-mask=0x");
-			riscv32_early_puthex32((uint32_t)active_mask);
-			riscv32_early_puts(" trap-stack=per-hart PASS\n");
+			char record[160];
+			(void)snprintf(record, sizeof(record),
+			    "[process-gate-14] child pid=%u entered U-mode cpu=1 "
+			    "active-pmap-mask=0x%08x trap-stack=per-hart PASS\n",
+			    process->pid, (uint32_t)active_mask);
+			riscv32_early_puts(record);
 		}
 	} else if (riscv32_boot_arg_has("process-gate-2") &&
 	    process->pid == 2U) {
 		riscv32_early_puts(
 		    "[process-gate-2] child real XNU task/thread entered U-mode PASS\n");
 	} else {
-		riscv32_early_puts("[linux-process] fork child pid=");
-		riscv32_early_putdec(process->pid);
-		riscv32_early_puts(" entered U-mode cpu=0\n");
+		char record[96];
+		(void)snprintf(record, sizeof(record),
+		    "[linux-process] fork child pid=%u entered U-mode cpu=0\n",
+		    process->pid);
+		riscv32_early_puts(record);
 	}
 	riscv32_return_to_user(thread->machine.iss);
 	panic("riscv32: return_to_user returned for PID %u", process->pid);
