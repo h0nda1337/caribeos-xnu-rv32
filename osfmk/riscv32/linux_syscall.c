@@ -30,6 +30,7 @@
  * port of Apple XNU 2050.48.11 on 2026-07-14.
  * 2026-10-12: native graphics ioctls and isolated managed brk/mmap backing.
  * Cross-hart clone/wait records and user console chunks use atomic writes.
+ * 2026-10-13: native counting semaphores and real clock_nanosleep waits.
  */
 
 #line 1
@@ -39,6 +40,7 @@
 #include <machine/graphics.h>
 #include <machine/native_ipc.h>
 #include <machine/native_area.h>
+#include <machine/native_sync.h>
 #include <machine/cpu_data.h>
 #include <machine/early_print.h>
 #include <machine/linux_exec.h>
@@ -232,6 +234,7 @@
 #define RISCV32_LINUX_EACCES	13U
 #define RISCV32_LINUX_ENOEXEC	8U
 #define RISCV32_LINUX_ENOSYS	38U
+#define RISCV32_LINUX_ENOTSUP	95U
 #define RISCV32_LINUX_EFAULT	14U
 #define RISCV32_LINUX_EEXIST	17U
 #define RISCV32_LINUX_ENOTDIR	20U
@@ -1232,6 +1235,7 @@ riscv32_linux_syscall_teardown_process(riscv32_linux_process_t *process,
 	personality = &process->personality;
 	riscv32_native_ipc_release_owner(process->pid);
 	riscv32_native_area_release_owner(process->pid);
+	riscv32_native_sync_release_owner(process->pid);
 	riscv32_linux_zero(resources, sizeof(*resources));
 	for (i = 0; i < RISCV32_LINUX_PIPE_MAX; i++) {
 		if (riscv32_linux_pipes[i].used != 0U) {
@@ -6998,7 +7002,8 @@ riscv32_linux_sys_ioctl(riscv_saved_state_t *state)
 	}
 	if (source.kind == RISCV32_LINUX_FD_NATIVE_IPC) {
 		uint32_t ipc_error = (uint32_t)(request == CARIBE_AREA_CALL ?
-		    riscv32_native_area_ioctl(request, arg) : riscv32_native_ipc_ioctl(request, arg));
+		    riscv32_native_area_ioctl(request, arg) : request == CARIBE_SYNC_CALL ?
+		    riscv32_native_sync_ioctl(request, arg) : riscv32_native_ipc_ioctl(request, arg));
 		if (ipc_error) riscv32_linux_return_errno(state, ipc_error);
 		else riscv32_linux_return_value(state, 0);
 		return TRUE;
@@ -8141,37 +8146,20 @@ riscv32_linux_sys_gettimeofday(riscv_saved_state_t *state)
 	return TRUE;
 }
 
-static boolean_t
-riscv32_linux_sys_nanosleep(riscv_saved_state_t *state, boolean_t time64)
+static uint32_t
+riscv32_linux_sleep_until(uint64_t deadline, uint32_t user_rem,
+    boolean_t time64)
 {
-	uint32_t user_req = state->thread.x[RISCV_X_A0];
-	uint32_t user_rem = state->thread.x[RISCV_X_A1];
-	uint32_t size = time64 ? 16U : 8U;
 	riscv32_linux_process_t *process = riscv32_linux_process_current();
-	uint64_t duration_ns;
-	uint64_t interval;
-	uint64_t deadline;
-	uint32_t error;
+	uint64_t now, remaining;
 	boolean_t interrupted = FALSE;
 
-	error = riscv32_linux_copyin_timespec_duration(user_req, time64,
-	    &duration_ns);
-	if (error != 0U) {
-		riscv32_linux_return_errno(state, error);
-		return TRUE;
-	}
-	if (user_rem != 0 && !riscv32_linux_copyout_zero(user_rem, size)) {
-		riscv32_linux_return_errno(state, RISCV32_LINUX_EFAULT);
-		return TRUE;
-	}
-	if (duration_ns != 0U) {
+	while (mach_absolute_time() < deadline) {
 		if (process == (riscv32_linux_process_t *)0 ||
 		    !riscv32_linux_process_transition(process,
 		    RISCV32_LINUX_PROCESS_SLEEPING)) {
 			panic("riscv32: nanosleep cannot enter process sleep");
 		}
-		nanoseconds_to_absolutetime(duration_ns, &interval);
-		clock_absolutetime_interval_to_deadline(interval, &deadline);
 		assert_wait_deadline((event_t)current_thread(), THREAD_UNINT,
 		    deadline);
 		__sync_synchronize();
@@ -8189,12 +8177,42 @@ riscv32_linux_sys_nanosleep(riscv_saved_state_t *state, boolean_t time64)
 		    RISCV32_LINUX_PROCESS_RUNNING)) {
 			panic("riscv32: nanosleep cannot resume process");
 		}
+		if (interrupted) break;
 	}
 	if (interrupted) {
-		riscv32_linux_return_errno(state, RISCV32_LINUX_EINTR);
-	} else {
-		riscv32_linux_return_value(state, 0);
+		if (user_rem != 0U) {
+			now = mach_absolute_time();
+			remaining = now < deadline ? deadline - now : 0U;
+			absolutetime_to_nanoseconds(remaining, &remaining);
+			if (!(time64 ? riscv32_linux_copyout_timespec64(user_rem,
+			    remaining / NSEC_PER_SEC, remaining % NSEC_PER_SEC) :
+			    riscv32_linux_copyout_timespec32(user_rem,
+			    remaining / NSEC_PER_SEC, remaining % NSEC_PER_SEC)))
+				return RISCV32_LINUX_EFAULT;
+		}
+		return RISCV32_LINUX_EINTR;
 	}
+	return 0U;
+}
+
+static boolean_t
+riscv32_linux_sys_nanosleep(riscv_saved_state_t *state, boolean_t time64)
+{
+	uint32_t user_req = state->thread.x[RISCV_X_A0];
+	uint32_t user_rem = state->thread.x[RISCV_X_A1];
+	uint64_t duration_ns, interval, now;
+	uint32_t error = riscv32_linux_copyin_timespec_duration(user_req,
+	    time64, &duration_ns);
+	if (!error && user_rem != 0U && !riscv32_linux_copyout_zero(user_rem,
+	    time64 ? 16U : 8U)) error = RISCV32_LINUX_EFAULT;
+	if (!error) {
+		nanoseconds_to_absolutetime(duration_ns, &interval);
+		now = mach_absolute_time();
+		if (interval > UINT64_MAX - now) error = RISCV32_LINUX_EINVAL;
+		else error = riscv32_linux_sleep_until(now + interval, user_rem, time64);
+	}
+	if (error) riscv32_linux_return_errno(state, error);
+	else riscv32_linux_return_value(state, 0);
 	return TRUE;
 }
 
@@ -8204,17 +8222,35 @@ riscv32_linux_sys_clock_nanosleep(riscv_saved_state_t *state,
 {
 	uint32_t user_req = state->thread.x[RISCV_X_A2];
 	uint32_t user_rem = state->thread.x[RISCV_X_A3];
-	uint32_t size = time64 ? 16U : 8U;
+	uint32_t clock = state->thread.x[RISCV_X_A0];
+	uint32_t flags = state->thread.x[RISCV_X_A1];
+	uint64_t duration_ns, interval, deadline, now;
+	uint32_t error;
 
-	if (!riscv32_linux_validate_timespec(user_req, time64)) {
-		riscv32_linux_return_errno(state, RISCV32_LINUX_EFAULT);
-		return TRUE;
+	/* Relative REALTIME sleep is supported; no adjustable wall clock exists.
+	 * Absolute deadlines use MONOTONIC only, matching clock_gettime's uptime. */
+	if (flags & ~1U) {
+		error = RISCV32_LINUX_EINVAL;
+	} else if (clock != 0U && clock != 1U) {
+		error = (clock == 2U || clock == 7U) ? RISCV32_LINUX_ENOTSUP : RISCV32_LINUX_EINVAL;
+	} else if (flags == 1U && clock == 0U) {
+		error = RISCV32_LINUX_ENOTSUP;
+	} else {
+		error = riscv32_linux_copyin_timespec_duration(user_req, time64, &duration_ns);
+		if (!error) {
+			nanoseconds_to_absolutetime(duration_ns, &interval);
+			now = mach_absolute_time();
+			deadline = interval;
+			if (flags == 0U) {
+				if (interval > UINT64_MAX - now) error = RISCV32_LINUX_EINVAL;
+				else deadline = now + interval;
+			}
+			if (!error) error = riscv32_linux_sleep_until(deadline,
+			    flags == 0U ? user_rem : 0U, time64);
+		}
 	}
-	if (user_rem != 0 && !riscv32_linux_copyout_zero(user_rem, size)) {
-		riscv32_linux_return_errno(state, RISCV32_LINUX_EFAULT);
-		return TRUE;
-	}
-	riscv32_linux_return_value(state, 0);
+	if (error) riscv32_linux_return_errno(state, error);
+	else riscv32_linux_return_value(state, 0);
 	return TRUE;
 }
 

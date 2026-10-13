@@ -39,6 +39,7 @@
 #include <machine/linux_exec.h>
 #include <machine/native_ipc.h>
 #include <machine/native_area.h>
+#include <machine/native_sync.h>
 #include <machine/linux_initrd.h>
 #include <machine/linux_process.h>
 #include <machine/linux_signal.h>
@@ -5788,6 +5789,7 @@ riscv32_linux_exec_replace_from_initrd(const char *path,
 	/* Image-owned native IPC is revoked only after a successful exec commit. */
 	riscv32_native_ipc_release_owner(process->pid);
 	riscv32_native_area_release_owner(process->pid);
+	riscv32_native_sync_release_owner(process->pid);
 	riscv32_copyio_set_user_pmap(candidate_pmap);
 	gate14_child = (process->flags &
 	    RISCV32_LINUX_PROCESS_FLAG_GATE14_CHILD) != 0U;
