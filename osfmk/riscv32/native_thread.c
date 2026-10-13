@@ -21,6 +21,8 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  * CARIBEOS MODIFICATION NOTICE
  * Created by h0nda1337, 2026-10-13. Raw RV32 user entry, not pthread/TLS.
+ * Modified 2026-10-13: native monotonic clock and worker deadline sleep;
+ * no expansion of worker Linux syscall or thread-control permissions.
  */
 #include <machine/native_thread.h>
 #include <machine/bootinfo.h>
@@ -87,6 +89,7 @@ static void nt_unlock_process(riscv32_linux_process_t *process)
 }
 static volatile uint32_t initialized;
 static uint32_t created, entered, exited, reaped, cancelled, faults, waits, preemptions;
+static uint32_t sleep_waits;
 
 static void nt_init(void)
 {
@@ -150,16 +153,21 @@ static uint64_t nt_deadline(uint32_t microseconds)
     nanoseconds_to_absolutetime((uint64_t)microseconds * 1000ULL, &interval);
     return mach_absolute_time() + interval;
 }
-static int nt_wait(uint32_t *sequence, uint32_t expected, uint64_t deadline)
+static int nt_wait_counted(uint32_t *sequence, uint32_t expected, uint64_t deadline, uint32_t *counter)
 {
     if (mach_absolute_time() >= deadline) return NT_TIMEDOUT;
     assert_wait_deadline((event_t)sequence, THREAD_UNINT, deadline);
     __sync_synchronize();
     if (__sync_fetch_and_add(sequence, 0U) == expected) {
         __sync_add_and_fetch(&waits, 1U);
+        if (counter) __sync_add_and_fetch(counter, 1U);
         thread_block(THREAD_CONTINUE_NULL);
     } else (void)clear_wait(current_thread(), THREAD_AWAKENED);
     return 0;
+}
+static int nt_wait(uint32_t *sequence, uint32_t expected, uint64_t deadline)
+{
+    return nt_wait_counted(sequence, expected, deadline, 0);
 }
 void riscv32_native_thread_exit(uint32_t status)
 {
@@ -371,10 +379,31 @@ int riscv32_native_thread_ioctl(uint32_t request, uint32_t user_arg)
     if (arg.operation == CARIBE_THREAD_YIELD) {
         thread_block(THREAD_CONTINUE_NULL); return 0;
     }
-    if (nt_current() && arg.operation != CARIBE_THREAD_SELF && arg.operation != CARIBE_THREAD_INFO)
+    if (nt_current() && arg.operation != CARIBE_THREAD_SELF && arg.operation != CARIBE_THREAD_INFO &&
+        arg.operation != CARIBE_THREAD_CLOCK && arg.operation != CARIBE_THREAD_SLEEP)
         return NT_NOTSUP;
     if (!riscv32_pmap_user_range_accessible(process->pmap, user_arg, sizeof(arg), TRUE)) return NT_FAULT;
     nt_init();
+    if (arg.operation == CARIBE_THREAD_CLOCK) {
+        uint64_t now;
+        absolutetime_to_nanoseconds(mach_absolute_time(), &now);
+        arg.reserved[CARIBE_THREAD_TIME_LOW] = (uint32_t)now;
+        arg.reserved[CARIBE_THREAD_TIME_HIGH] = (uint32_t)(now >> 32);
+        return riscv32_copyout(&arg, user_arg, sizeof(arg)) ? NT_FAULT : 0;
+    }
+    if (arg.operation == CARIBE_THREAD_SLEEP) {
+        object = nt_current();
+        if (!object || !riscv32_native_thread_cpu_allowed()) return NT_PERM;
+        if (!arg.timeout_us) { thread_block(THREAD_CONTINUE_NULL); return 0; }
+        deadline = nt_deadline(arg.timeout_us);
+        while (mach_absolute_time() < deadline) {
+            if (!current_thread()->active) riscv32_native_thread_exit(CARIBE_THREAD_CANCELLED);
+            sequence = __sync_fetch_and_add(&object->sequence, 0U);
+            error = nt_wait_counted(&object->sequence, sequence, deadline, &sleep_waits);
+            if (error && error != NT_TIMEDOUT) return error;
+        }
+        return 0;
+    }
     if (arg.operation == CARIBE_THREAD_CREATE) return nt_create(process, &arg, user_arg);
     if (arg.operation == CARIBE_THREAD_SELF) { arg.id = riscv32_native_thread_identity(); arg.owner = process->pid; arg.cpu = get_cpu_number(); arg.tp = current_thread()->machine.user_tp; }
     else if (arg.operation == CARIBE_THREAD_STATS) {
@@ -384,6 +413,7 @@ int riscv32_native_thread_ioctl(uint32_t request, uint32_t user_arg)
         arg.created = created; arg.reaped = reaped; arg.entered = entered; arg.exited = exited;
         arg.cancelled = cancelled; arg.faults = faults;
         arg.waits = __sync_fetch_and_add(&waits, 0U); arg.preemptions = __sync_fetch_and_add(&preemptions, 0U);
+        arg.reserved[CARIBE_THREAD_SLEEP_WAITS] = __sync_fetch_and_add(&sleep_waits, 0U);
         nt_unlock_queue();
     } else {
         nt_lock_queue(); object = nt_lookup(arg.id);

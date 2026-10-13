@@ -38,6 +38,14 @@
 #define CARIBE_THREAD_SELF 7U
 #define CARIBE_THREAD_EXIT 8U
 #define CARIBE_THREAD_YIELD 9U
+#define CARIBE_THREAD_CLOCK 10U
+#define CARIBE_THREAD_SLEEP 11U
+/* CLOCK output only: reserved[0:1] contain monotonic nanoseconds, low/high.
+   All reserved words must still be zero on input for every operation. */
+#define CARIBE_THREAD_TIME_LOW 0U
+#define CARIBE_THREAD_TIME_HIGH 1U
+/* STATS output only: actual native sleep thread_block calls. */
+#define CARIBE_THREAD_SLEEP_WAITS 2U
 #define CARIBE_THREAD_MAX 16U
 #define CARIBE_THREAD_SUSPENDED 2U
 #define CARIBE_THREAD_RUNNING 3U
