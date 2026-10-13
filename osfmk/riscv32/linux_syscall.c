@@ -37,6 +37,7 @@
 #include <machine/bootinfo.h>
 #include <machine/copyio.h>
 #include <machine/graphics.h>
+#include <machine/native_ipc.h>
 #include <machine/cpu_data.h>
 #include <machine/early_print.h>
 #include <machine/linux_exec.h>
@@ -283,6 +284,7 @@
 #define RISCV32_LINUX_FD_PROC_STAT 26U
 #define RISCV32_LINUX_FD_NULL	27U
 #define RISCV32_LINUX_FD_GRAPHICS 30U
+#define RISCV32_LINUX_FD_NATIVE_IPC 31U
 #define RISCV32_LINUX_ENODEV 19U
 #define RISCV32_LINUX_FD_PROC_SELF_FDINFO 28U
 #define RISCV32_LINUX_FD_PROC_CARIBE_RESOURCES 29U
@@ -1227,6 +1229,7 @@ riscv32_linux_syscall_teardown_process(riscv32_linux_process_t *process,
 		panic("riscv32: invalid Linux process teardown");
 	}
 	personality = &process->personality;
+	riscv32_native_ipc_release_owner(process->pid);
 	riscv32_linux_zero(resources, sizeof(*resources));
 	for (i = 0; i < RISCV32_LINUX_PIPE_MAX; i++) {
 		if (riscv32_linux_pipes[i].used != 0U) {
@@ -4891,17 +4894,19 @@ riscv32_linux_sys_openat(riscv_saved_state_t *state)
 	}
 	riscv32_linux_resolve_path_at(dirfd, raw_path, path, sizeof(path));
 
-	if (riscv32_linux_streq(path, "/dev/caribe-graphics")) {
+	if (riscv32_linux_streq(path, "/dev/caribe-graphics") ||
+	    riscv32_linux_streq(path, "/dev/caribe-ipc")) {
+		boolean_t native_ipc = riscv32_linux_streq(path, "/dev/caribe-ipc");
 		if ((flags & ~(RISCV32_LINUX_O_ACCMODE | RISCV32_LINUX_O_CLOEXEC |
 		    RISCV32_LINUX_O_NONBLOCK | 0x8000U)) != 0 || accmode != RISCV32_LINUX_O_RDWR) {
 			riscv32_linux_return_errno(state, RISCV32_LINUX_EINVAL);
 			return TRUE;
 		}
-		if (!riscv32_graphics_available()) {
+		if (!native_ipc && !riscv32_graphics_available()) {
 			riscv32_linux_return_errno(state, RISCV32_LINUX_ENODEV);
 			return TRUE;
 		}
-		if (!riscv32_linux_fd_alloc(RISCV32_LINUX_FD_GRAPHICS,
+		if (!riscv32_linux_fd_alloc(native_ipc ? RISCV32_LINUX_FD_NATIVE_IPC : RISCV32_LINUX_FD_GRAPHICS,
 		    accmode, (const riscv32_linux_initrd_file_t *)0, &fd)) {
 			riscv32_linux_return_errno(state, RISCV32_LINUX_EMFILE);
 			return TRUE;
@@ -6986,6 +6991,12 @@ riscv32_linux_sys_ioctl(riscv_saved_state_t *state)
 	if (source.kind == RISCV32_LINUX_FD_GRAPHICS) {
 		uint32_t gfx_error = (uint32_t)riscv32_graphics_ioctl(request, arg);
 		if (gfx_error != 0U) riscv32_linux_return_errno(state, gfx_error);
+		else riscv32_linux_return_value(state, 0);
+		return TRUE;
+	}
+	if (source.kind == RISCV32_LINUX_FD_NATIVE_IPC) {
+		uint32_t ipc_error = (uint32_t)riscv32_native_ipc_ioctl(request, arg);
+		if (ipc_error) riscv32_linux_return_errno(state, ipc_error);
 		else riscv32_linux_return_value(state, 0);
 		return TRUE;
 	}

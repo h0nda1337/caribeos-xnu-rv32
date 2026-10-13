@@ -87,6 +87,7 @@ DATAFILES = \
 	virtio_blk.h \
 	virtio_mmio.h \
 	graphics.h \
+	native_ipc.h \
 	vm_tuning.h \
 	xpr.h
 
