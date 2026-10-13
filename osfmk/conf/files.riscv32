@@ -42,3 +42,4 @@ osfmk/riscv32/virtio_blk.c	standard
 osfmk/riscv32/virtio_mmio.c	standard
 osfmk/riscv32/graphics.c	standard
 osfmk/riscv32/native_ipc.c	standard
+osfmk/riscv32/native_area.c	standard

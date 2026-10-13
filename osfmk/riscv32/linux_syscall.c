@@ -38,6 +38,7 @@
 #include <machine/copyio.h>
 #include <machine/graphics.h>
 #include <machine/native_ipc.h>
+#include <machine/native_area.h>
 #include <machine/cpu_data.h>
 #include <machine/early_print.h>
 #include <machine/linux_exec.h>
@@ -1230,6 +1231,7 @@ riscv32_linux_syscall_teardown_process(riscv32_linux_process_t *process,
 	}
 	personality = &process->personality;
 	riscv32_native_ipc_release_owner(process->pid);
+	riscv32_native_area_release_owner(process->pid);
 	riscv32_linux_zero(resources, sizeof(*resources));
 	for (i = 0; i < RISCV32_LINUX_PIPE_MAX; i++) {
 		if (riscv32_linux_pipes[i].used != 0U) {
@@ -6995,7 +6997,8 @@ riscv32_linux_sys_ioctl(riscv_saved_state_t *state)
 		return TRUE;
 	}
 	if (source.kind == RISCV32_LINUX_FD_NATIVE_IPC) {
-		uint32_t ipc_error = (uint32_t)riscv32_native_ipc_ioctl(request, arg);
+		uint32_t ipc_error = (uint32_t)(request == CARIBE_AREA_CALL ?
+		    riscv32_native_area_ioctl(request, arg) : riscv32_native_ipc_ioctl(request, arg));
 		if (ipc_error) riscv32_linux_return_errno(state, ipc_error);
 		else riscv32_linux_return_value(state, 0);
 		return TRUE;
@@ -8999,6 +9002,10 @@ riscv32_linux_sys_mmap(riscv_saved_state_t *state)
 	}
 
 	prot = riscv32_linux_mmap_prot(linux_prot);
+	if (fixed && riscv32_native_area_reserved(vaddr, map_size)) {
+		riscv32_linux_return_errno(state, RISCV32_LINUX_EINVAL);
+		return TRUE;
+	}
 	if (prot == VM_PROT_NONE) {
 		prot = VM_PROT_READ;
 	}
@@ -9044,6 +9051,10 @@ riscv32_linux_sys_munmap(riscv_saved_state_t *state)
 		return TRUE;
 	}
 	pmap = riscv32_pmap_current();
+	if (riscv32_native_area_reserved(addr, map_size)) {
+		riscv32_linux_return_errno(state, RISCV32_LINUX_EINVAL);
+		return TRUE;
+	}
 	riscv32_linux_mmap_unmap_range(pmap, addr, map_size);
 	riscv32_linux_return_value(state, 0);
 	return TRUE;
@@ -9068,6 +9079,10 @@ riscv32_linux_sys_mprotect(riscv_saved_state_t *state)
 	}
 	map_size = riscv32_linux_page_up(len);
 	if (!riscv32_user_range_valid(addr, map_size)) {
+		riscv32_linux_return_errno(state, RISCV32_LINUX_EINVAL);
+		return TRUE;
+	}
+	if (riscv32_native_area_reserved(addr, map_size)) {
 		riscv32_linux_return_errno(state, RISCV32_LINUX_EINVAL);
 		return TRUE;
 	}
@@ -9117,6 +9132,10 @@ riscv32_linux_sys_mremap(riscv_saved_state_t *state)
 
 	if (old_size != 0 && !riscv32_user_range_valid(old_addr, old_size)) {
 		riscv32_linux_return_errno(state, RISCV32_LINUX_EFAULT);
+		return TRUE;
+	}
+	if (riscv32_native_area_reserved(old_addr, old_size)) {
+		riscv32_linux_return_errno(state, RISCV32_LINUX_EINVAL);
 		return TRUE;
 	}
 	if (new_size <= old_size) {

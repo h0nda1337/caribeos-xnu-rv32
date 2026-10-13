@@ -38,6 +38,7 @@
 #include <machine/early_print.h>
 #include <machine/linux_exec.h>
 #include <machine/native_ipc.h>
+#include <machine/native_area.h>
 #include <machine/linux_initrd.h>
 #include <machine/linux_process.h>
 #include <machine/linux_signal.h>
@@ -1413,14 +1414,17 @@ riscv32_linux_gate4_clone_page(void *context, vm_map_offset_t vaddr,
 	const void *source;
 	uint32_t index;
 
-	(void)vaddr;
 	(void)prot;
 	if (child == (riscv32_linux_process_t *)0 ||
-	    destination_page == (ppnum_t *)0 ||
-	    child->owned_user_page_count >=
-	    RISCV32_LINUX_PROCESS_OWNED_USER_PAGES) {
+	    destination_page == (ppnum_t *)0) {
 		return KERN_RESOURCE_SHORTAGE;
 	}
+	if (riscv32_native_area_fork_page(child->pid, (uint32_t)vaddr, (uint32_t)source_page)) {
+		*destination_page = source_page;
+		return KERN_SUCCESS;
+	}
+	if (child->owned_user_page_count >= RISCV32_LINUX_PROCESS_OWNED_USER_PAGES)
+		return KERN_RESOURCE_SHORTAGE;
 	riscv32_linux_user_backing_init();
 	simple_lock(&riscv32_linux_user_backing_lock);
 	if (riscv32_linux_user_backing_free_count == 0U) {
@@ -2628,6 +2632,11 @@ riscv32_linux_exec_fork_current(riscv_saved_state_t *parent_state,
 		goto recoverable_failure;
 	}
 	riscv32_linux_process_adopt_exec_info(child, &parent->exec_info);
+	if (riscv32_native_area_inherit(parent->pid, child->pid, user_pmap)) {
+		kr = KERN_RESOURCE_SHORTAGE;
+		failure_stage = "shared-area-inherit";
+		goto recoverable_failure;
+	}
 	kr = riscv32_pmap_clone_user_eager(parent->pmap, user_pmap,
 	    riscv32_linux_gate4_clone_page, child, &cloned_pages);
 	if (kr != KERN_SUCCESS || cloned_pages == 0U) {
@@ -5778,6 +5787,7 @@ riscv32_linux_exec_replace_from_initrd(const char *path,
 	candidate_map = VM_MAP_NULL;
 	/* Image-owned native IPC is revoked only after a successful exec commit. */
 	riscv32_native_ipc_release_owner(process->pid);
+	riscv32_native_area_release_owner(process->pid);
 	riscv32_copyio_set_user_pmap(candidate_pmap);
 	gate14_child = (process->flags &
 	    RISCV32_LINUX_PROCESS_FLAG_GATE14_CHILD) != 0U;
