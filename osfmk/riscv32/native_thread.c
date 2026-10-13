@@ -34,8 +34,10 @@
 #include <kern/clock.h>
 #include <kern/misc_protos.h>
 #include <kern/sched_prim.h>
+#include <kern/spl.h>
 #include <kern/task.h>
 #include <kern/thread.h>
+#include <kern/wait_queue.h>
 #include <mach/mach_time.h>
 #include <mach/thread_act_server.h>
 #include <string.h>
@@ -61,16 +63,40 @@ typedef struct {
 } native_thread_t;
 static native_thread_t objects[CARIBE_THREAD_MAX];
 static decl_simple_lock_data(, native_thread_lock);
+/* RV32 simple locks are atomic but do not suppress same-hart kernel
+   preemption. Never switch to a competing user thread while owning this lock. */
+static void nt_lock_queue(void)
+{
+    disable_preemption();
+    simple_lock(&native_thread_lock);
+}
+static void nt_unlock_queue(void)
+{
+    simple_unlock(&native_thread_lock);
+    enable_preemption();
+}
+static void nt_lock_process(riscv32_linux_process_t *process)
+{
+    disable_preemption();
+    simple_lock(&process->lock);
+}
+static void nt_unlock_process(riscv32_linux_process_t *process)
+{
+    simple_unlock(&process->lock);
+    enable_preemption();
+}
 static volatile uint32_t initialized;
 static uint32_t created, entered, exited, reaped, cancelled, faults, waits, preemptions;
 
 static void nt_init(void)
 {
     if (__sync_fetch_and_add(&initialized, 0U) == 2U) return;
+    disable_preemption();
     if (__sync_bool_compare_and_swap(&initialized, 0U, 1U)) {
         simple_lock_init(&native_thread_lock, 0);
         __sync_synchronize(); initialized = 2U;
     } else while (__sync_fetch_and_add(&initialized, 0U) != 2U) __asm__ volatile("nop");
+    enable_preemption();
 }
 static uint32_t nt_id(native_thread_t *object)
 {
@@ -107,10 +133,10 @@ boolean_t riscv32_native_thread_owner_busy(uint32_t pid)
 {
     uint32_t i; boolean_t busy = FALSE;
     if (__sync_fetch_and_add(&initialized, 0U) != 2U) return FALSE;
-    simple_lock(&native_thread_lock);
+    nt_lock_queue();
     for (i = 0; i < CARIBE_THREAD_MAX; i++)
         if (objects[i].owner && objects[i].owner->pid == pid) { busy = TRUE; break; }
-    simple_unlock(&native_thread_lock);
+    nt_unlock_queue();
     return busy;
 }
 static void nt_wake(native_thread_t *object)
@@ -139,16 +165,16 @@ void riscv32_native_thread_exit(uint32_t status)
 {
     native_thread_t *object = nt_current();
     if (!object || !riscv32_native_thread_cpu_allowed()) panic("native thread exit identity");
-    simple_lock(&native_thread_lock);
+    nt_lock_queue();
     object->status = status;
     object->state = CARIBE_THREAD_EXITED;
     exited++;
     if (status == CARIBE_THREAD_CANCELLED && !current_thread()->active) cancelled++;
     nt_wake(object);
-    simple_unlock(&native_thread_lock);
-    simple_lock(&object->owner->lock);
+    nt_unlock_queue();
+    nt_lock_process(object->owner);
     object->owner->live_thread_count--;
-    simple_unlock(&object->owner->lock);
+    nt_unlock_process(object->owner);
     (void)thread_terminate_internal(current_thread());
     thread_terminate_self();
     panic("native thread exit returned");
@@ -172,10 +198,18 @@ void riscv32_native_thread_user_boundary(void)
         else (void)clear_wait(current_thread(), THREAD_AWAKENED);
         if (!current_thread()->active) riscv32_native_thread_exit(CARIBE_THREAD_CANCELLED);
     }
-    /* Only the opted-in raw-thread profile takes new user preemption paths. */
-    if ((*ast_pending() & (AST_PREEMPT | AST_URGENT)) == (AST_PREEMPT | AST_URGENT) && get_preemption_level() == 0) {
-        __sync_add_and_fetch(&preemptions, 1U);
-        ast_taken(AST_PREEMPTION, FALSE);
+    /* Preserve this trap frame across normal as well as urgent preemption.
+       The generic user continuation is not implemented on RV32 yet. */
+    {
+        spl_t s = splsched();
+        ast_t reasons = *ast_pending() & AST_PREEMPTION;
+        if ((reasons & AST_PREEMPT) && get_preemption_level() == 0 &&
+            wait_queue_assert_possible(current_thread())) {
+            ast_off(AST_PREEMPTION);
+            __sync_add_and_fetch(&preemptions, 1U);
+            thread_block_reason(THREAD_CONTINUE_NULL, NULL, reasons);
+        }
+        splx(s);
     }
     if (object && !current_thread()->active) riscv32_native_thread_exit(CARIBE_THREAD_CANCELLED);
 }
@@ -203,21 +237,21 @@ static void nt_reap(native_thread_t *object)
     uint64_t deadline = nt_deadline(60000000U);
     /* The scheduler/reaper owns another reference until it releases the stack.
        Keep the slot and process alive until the final deallocation notification. */
-    simple_lock(&native_thread_lock);
+    nt_lock_queue();
     object->state = NT_REAPING;
-    simple_unlock(&native_thread_lock);
+    nt_unlock_queue();
     thread_deallocate(thread);
     while (__sync_fetch_and_add(&object->destroyed, 0U) == 0U)
         if (nt_wait(&object->destroyed, 0U, deadline)) panic("native thread reaper timeout");
-    simple_lock(&native_thread_lock);
+    nt_lock_queue();
     object->thread = THREAD_NULL;
     object->owner = 0;
     object->state = 0;
     reaped++;
-    simple_unlock(&native_thread_lock);
-    simple_lock(&owner->lock);
+    nt_unlock_queue();
+    nt_lock_process(owner);
     owner->thread_count--;
-    simple_unlock(&owner->lock);
+    nt_unlock_process(owner);
     riscv32_linux_process_release(owner);
 }
 static void nt_cancel(native_thread_t *object)
@@ -230,10 +264,10 @@ static void nt_cancel(native_thread_t *object)
     }
     for (;;) {
         uint32_t sequence;
-        simple_lock(&native_thread_lock);
-        if (object->state == CARIBE_THREAD_EXITED) { simple_unlock(&native_thread_lock); break; }
+        nt_lock_queue();
+        if (object->state == CARIBE_THREAD_EXITED) { nt_unlock_queue(); break; }
         sequence = object->sequence;
-        simple_unlock(&native_thread_lock);
+        nt_unlock_queue();
         if (nt_wait(&object->sequence, sequence, deadline)) panic("native thread cancellation timeout");
     }
 }
@@ -244,10 +278,15 @@ void riscv32_native_thread_release_owner(uint32_t pid)
     for (i = 0; i < CARIBE_THREAD_MAX; i++) {
         native_thread_t *object = &objects[i];
         boolean_t owned;
-        simple_lock(&native_thread_lock);
+        nt_lock_queue();
         owned = object->owner && object->owner->pid == pid;
-        simple_unlock(&native_thread_lock);
+        nt_unlock_queue();
         if (owned) { nt_cancel(object); nt_reap(object); }
+    }
+    {
+        riscv32_linux_process_t *process = riscv32_linux_process_current();
+        if (process && process->pid == pid && riscv32_native_futex_owner_waiters(process->pmap))
+            panic("native futex waiter survived owner teardown");
     }
 }
 static int nt_create(riscv32_linux_process_t *process, struct caribe_thread_request *arg,
@@ -269,32 +308,32 @@ static int nt_create(riscv32_linux_process_t *process, struct caribe_thread_requ
     if (arg->tp == current_thread()->machine.user_tp ||
         (arg->stack_base < process->exec_info.stack_top && end > process->exec_info.stack_base))
         return NT_BUSY;
-    simple_lock(&native_thread_lock);
+    nt_lock_queue();
     for (i = 0; i < CARIBE_THREAD_MAX; i++) {
         native_thread_t *other = &objects[i];
         if (other->owner == process && (other->tp == arg->tp ||
             (arg->tp >= other->stack_base && arg->tp < other->stack_base + other->stack_size) ||
             (other->tp >= arg->stack_base && other->tp < end) ||
             (arg->stack_base < other->stack_base + other->stack_size && end > other->stack_base))) {
-            simple_unlock(&native_thread_lock); return NT_BUSY;
+            nt_unlock_queue(); return NT_BUSY;
         }
         if (!other->owner && !object) object = other;
     }
-    if (!object) { simple_unlock(&native_thread_lock); return NT_NOSPC; }
+    if (!object) { nt_unlock_queue(); return NT_NOSPC; }
     object->generation = object->generation % 0x1ffffffU + 1U;
     object->owner = process; object->state = NT_RESERVED; object->status = object->destroyed = 0;
     object->stack_base = arg->stack_base; object->stack_size = arg->stack_size; object->tp = arg->tp;
-    simple_unlock(&native_thread_lock);
+    nt_unlock_queue();
     riscv32_linux_process_retain(process);
     kr = thread_create(process->task, &thread);
     if (kr != KERN_SUCCESS) {
-        simple_lock(&native_thread_lock); object->owner = 0; object->state = 0; simple_unlock(&native_thread_lock);
+        nt_lock_queue(); object->owner = 0; object->state = 0; nt_unlock_queue();
         riscv32_linux_process_release(process); return NT_AGAIN;
     }
     object->thread = thread;
-    simple_lock(&process->lock);
+    nt_lock_process(process);
     process->thread_count++; process->live_thread_count++;
-    simple_unlock(&process->lock);
+    nt_unlock_process(process);
     thread->machine.native_context = object;
     thread->machine.deallocate_sequence = &object->destroyed;
     thread->machine.user_pmap = process->pmap;
@@ -307,7 +346,7 @@ static int nt_create(riscv32_linux_process_t *process, struct caribe_thread_requ
     state->thread.x[RISCV_X_A0] = arg->argument;
     state->thread.x[RISCV_X_A1] = nt_id(object);
     s = splsched(); thread_lock(thread); thread->bound_processor = master_processor; thread_unlock(thread); splx(s);
-    simple_lock(&native_thread_lock); object->state = CARIBE_THREAD_SUSPENDED; created++; simple_unlock(&native_thread_lock);
+    nt_lock_queue(); object->state = CARIBE_THREAD_SUSPENDED; created++; nt_unlock_queue();
     arg->id = nt_id(object); arg->state = object->state; arg->owner = process->pid; arg->cpu = 0;
     if (riscv32_copyout(arg, user_arg, sizeof(*arg))) { nt_cancel(object); nt_reap(object); return NT_FAULT; }
     return 0;
@@ -339,24 +378,24 @@ int riscv32_native_thread_ioctl(uint32_t request, uint32_t user_arg)
     if (arg.operation == CARIBE_THREAD_CREATE) return nt_create(process, &arg, user_arg);
     if (arg.operation == CARIBE_THREAD_SELF) { arg.id = riscv32_native_thread_identity(); arg.owner = process->pid; arg.cpu = get_cpu_number(); arg.tp = current_thread()->machine.user_tp; }
     else if (arg.operation == CARIBE_THREAD_STATS) {
-        simple_lock(&native_thread_lock);
+        nt_lock_queue();
         arg.live = 0;
         for (i = 0; i < CARIBE_THREAD_MAX; i++) arg.live += objects[i].owner != 0;
         arg.created = created; arg.reaped = reaped; arg.entered = entered; arg.exited = exited;
         arg.cancelled = cancelled; arg.faults = faults;
         arg.waits = __sync_fetch_and_add(&waits, 0U); arg.preemptions = __sync_fetch_and_add(&preemptions, 0U);
-        simple_unlock(&native_thread_lock);
+        nt_unlock_queue();
     } else {
-        simple_lock(&native_thread_lock); object = nt_lookup(arg.id);
-        if (!object || object->owner != process) { simple_unlock(&native_thread_lock); return object ? NT_PERM : NT_INVAL; }
+        nt_lock_queue(); object = nt_lookup(arg.id);
+        if (!object || object->owner != process) { nt_unlock_queue(); return object ? NT_PERM : NT_INVAL; }
         arg.state = object->state; arg.status = object->status; arg.owner = process->pid; arg.cpu = 0;
-        simple_unlock(&native_thread_lock);
+        nt_unlock_queue();
         if (arg.operation == CARIBE_THREAD_START) {
             if (object->state != CARIBE_THREAD_SUSPENDED) return NT_BUSY;
             if (riscv32_copyout(&arg, user_arg, sizeof(arg))) return NT_FAULT;
-            simple_lock(&native_thread_lock);
+            nt_lock_queue();
             object->state = CARIBE_THREAD_RUNNING;
-            simple_unlock(&native_thread_lock);
+            nt_unlock_queue();
             if (thread_resume(object->thread) != KERN_SUCCESS) panic("native thread start failed");
             return 0;
         } else if (arg.operation == CARIBE_THREAD_CANCEL) {
@@ -365,10 +404,10 @@ int riscv32_native_thread_ioctl(uint32_t request, uint32_t user_arg)
         } else if (arg.operation == CARIBE_THREAD_JOIN) {
             deadline = nt_deadline(arg.timeout_us);
             for (;;) {
-                simple_lock(&native_thread_lock);
-                if (object->state == CARIBE_THREAD_EXITED) { simple_unlock(&native_thread_lock); break; }
+                nt_lock_queue();
+                if (object->state == CARIBE_THREAD_EXITED) { nt_unlock_queue(); break; }
                 sequence = object->sequence;
-                simple_unlock(&native_thread_lock);
+                nt_unlock_queue();
                 if (!arg.timeout_us) return NT_AGAIN;
                 if (riscv32_linux_signal_has_deliverable(process)) return NT_INTR;
                 if ((error = nt_wait(&object->sequence, sequence, deadline))) return error;

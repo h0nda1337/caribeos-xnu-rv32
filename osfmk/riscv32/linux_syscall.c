@@ -10262,16 +10262,13 @@ riscv32_linux_sys_wait4_real(riscv_saved_state_t *state,
 		    child_gate14_stage, child_last_cpu, child_entry_count,
 		    child_pmap_release, status);
 		if (riscv32_linux_gate14_should_log_cycle(child_gate14_cycle)) {
-			if ((parent->flags &
-			    RISCV32_LINUX_PROCESS_FLAG_GATE14_DRIVER) != 0U) {
-				riscv32_early_puts("[process-gate-14] driver pid=");
-				riscv32_early_putdec(parent->pid);
-				riscv32_early_puts(" cpu=0 wait4 reaped child=");
-			} else {
-				riscv32_early_puts("[process-gate-14] Bash pid=2 cpu=0 wait4 reaped child=");
-			}
-			riscv32_early_putdec(pid);
-			riscv32_early_puts(" child-last-cpu=1 pmap-release=1 status=0 PASS\n");
+			char record[160];
+			(void)snprintf(record, sizeof(record),
+			    "[process-gate-14] %s pid=%u cpu=0 wait4 reaped child=%u "
+			    "child-last-cpu=1 pmap-release=1 status=0 PASS\n",
+			    (parent->flags & RISCV32_LINUX_PROCESS_FLAG_GATE14_DRIVER) ? "driver" : "Bash",
+			    parent->pid, pid);
+			riscv32_early_puts(record);
 		}
 	}
 	if (verbose_wait) {
@@ -10493,16 +10490,13 @@ riscv32_linux_sys_waitid(riscv_saved_state_t *state)
 		    child_gate14_stage, child_last_cpu, child_entry_count,
 		    child_pmap_release, status);
 		if (riscv32_linux_gate14_should_log_cycle(child_gate14_cycle)) {
-			if ((parent->flags &
-			    RISCV32_LINUX_PROCESS_FLAG_GATE14_DRIVER) != 0U) {
-				riscv32_early_puts("[process-gate-14] driver pid=");
-				riscv32_early_putdec(parent->pid);
-				riscv32_early_puts(" cpu=0 woke/reaped child=");
-			} else {
-				riscv32_early_puts("[process-gate-14] Bash pid=2 cpu=0 woke/reaped child=");
-			}
-			riscv32_early_putdec(pid);
-			riscv32_early_puts(" child-last-cpu=1 pmap-release=1 status=0 PASS\n");
+			char record[160];
+			(void)snprintf(record, sizeof(record),
+			    "[process-gate-14] %s pid=%u cpu=0 woke/reaped child=%u "
+			    "child-last-cpu=1 pmap-release=1 status=0 PASS\n",
+			    (parent->flags & RISCV32_LINUX_PROCESS_FLAG_GATE14_DRIVER) ? "driver" : "Bash",
+			    parent->pid, pid);
+			riscv32_early_puts(record);
 		}
 	}
 	if ((parent->flags & RISCV32_LINUX_PROCESS_FLAG_GATE7_PARENT) != 0U) {
@@ -10627,9 +10621,10 @@ riscv32_linux_sys_getcpu(riscv_saved_state_t *state)
 		}
 		if (riscv32_linux_gate14_note_getcpu(process) &&
 		    riscv32_linux_gate14_should_log_process(process)) {
-			riscv32_early_puts("[process-gate-14] getcpu pid=");
-			riscv32_early_putdec(process->pid);
-			riscv32_early_puts(" cpu=1 node=0 affinity=1 PASS\n");
+			char record[96];
+			(void)snprintf(record, sizeof(record),
+			    "[process-gate-14] getcpu pid=%u cpu=1 node=0 affinity=1 PASS\n", process->pid);
+			riscv32_early_puts(record);
 		}
 	}
 	riscv32_linux_return_value(state, 0);
@@ -10935,6 +10930,8 @@ riscv32_linux_sys_futex(riscv_saved_state_t *state)
 	uint32_t op = state->thread.x[RISCV_X_A1] & RISCV32_LINUX_FUTEX_CMD_MASK;
 	uint32_t expected = state->thread.x[RISCV_X_A2];
 	uint32_t current;
+	if (riscv32_native_futex_dispatch(state,
+	    (state->thread.x[RISCV_X_A7] & 0xffffffU) == 422U)) return TRUE;
 
 	switch (op) {
 	case RISCV32_LINUX_FUTEX_WAKE:
@@ -11392,13 +11389,11 @@ riscv32_linux_terminate_current(uint32_t status, uint32_t signal)
 		}
 		riscv32_linux_gate14_note_exit(process, status);
 		if (riscv32_linux_gate14_should_log_process(process)) {
-			riscv32_early_puts("[process-gate-14] child pid=");
-			riscv32_early_putdec(process->pid);
-			riscv32_early_puts(" exit cpu=1 active-pmap-mask=0x");
-			riscv32_early_puthex32((uint32_t)active_mask);
-			riscv32_early_puts(" status=");
-			riscv32_early_putdec(status);
-			riscv32_early_puts(" PASS\n");
+			char record[160];
+			(void)snprintf(record, sizeof(record),
+			    "[process-gate-14] child pid=%u exit cpu=1 active-pmap-mask=0x%08x "
+			    "status=%u PASS\n", process->pid, (uint32_t)active_mask, status);
+			riscv32_early_puts(record);
 		} else if (riscv32_linux_gate14_stress_enabled()) {
 			verbose_exit = FALSE;
 		}

@@ -2,7 +2,8 @@
 param(
     [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
     [string[]]$Target = @("pmap.o"),
-    [string]$ForceRiscv32Sources = ""
+    [string]$ForceRiscv32Sources = "",
+    [string]$ForceKernSources = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,6 +23,16 @@ if ($ForceRiscv32Sources) {
         $forced += @("-W", $source.Replace('\', '/'))
     }
     # Keep GNU make's -W inside the script, away from PowerShell common parameters.
+    $Target = $forced + $Target
+}
+if ($ForceKernSources) {
+    $forced = @()
+    foreach ($name in $ForceKernSources.Split(',')) {
+        if ($name -notmatch '^[a-z][a-z0-9_]*$') { throw "Invalid shared kernel source name" }
+        $source = Join-Path $repo "osfmk/kern/$name.c"
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing source: $source" }
+        $forced += @("-W", $source.Replace('\', '/'))
+    }
     $Target = $forced + $Target
 }
 $workspace = Split-Path -Parent $repo

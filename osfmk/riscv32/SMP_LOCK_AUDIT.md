@@ -53,3 +53,30 @@ than non-atomic load/store substitutions.
 
 These limitations do not invalidate the phase-1 bound-kernel-thread workload,
 but they remain blockers for production SMP and unrestricted userspace SMP.
+
+## Shared-Task User Wait Queues
+
+The opt-in private-futex sixteen-waiter gate exposed a same-hart kernel
+preemption hazard: `usimple_lock` is an atomic RV32A interlock, not a
+preemption-disable primitive. With SMP F interrupt-return preemption enabled,
+switching a lock owner out can schedule a competing CPU0 user thread which
+spins on that owner's lock. UP does not traverse this supervisor-preemption
+path and therefore is not sufficient to verify the queue contract.
+
+Native futex, raw-thread registry and counting-semaphore queue acquisitions
+now explicitly disable preemption before the atomic acquisition and restore
+it after release. Raw-thread process-counter updates have the same guard.
+No thread blocks while owning these interlocks. Timer interrupts and normal
+user/supervisor scheduling remain enabled outside the critical sections.
+This is a scoped caller fix, not a claim that every existing kernel simple
+lock is automatically preemption-safe or that all scheduler locking is audited.
+
+The full profile also exposed a separate scheduler livelock. QMP snapshots
+from both CPU indices showed CPU0 waiting on the reaper's sched_lock while
+CPU1's reaper held it and retried thread selection forever: the shared proto
+runqueue was nonempty only because CPU0-bound user workers were runnable.
+RV32 queue-empty, priority, csw_check and count queries now filter by binding
+under global_runq_lock, matching choose_thread. Dequeue balances urgency.
+No extra thread locks are taken while scanning; original SPL-scheduler callers
+and shared-queue ownership protect membership. No global lock implementation
+or non-RV32 scheduler behavior is replaced.

@@ -52,6 +52,10 @@ struct caribe_thread_request {
 typedef char caribe_thread_abi_size[(sizeof(struct caribe_thread_request) == 128) ? 1 : -1];
 #ifdef KERNEL
 #include <mach/boolean.h>
+#include <mach/thread_status.h>
+boolean_t riscv32_native_futex_dispatch(riscv_saved_state_t *state, boolean_t time64);
+struct pmap;
+uint32_t riscv32_native_futex_owner_waiters(struct pmap *pmap);
 int riscv32_native_thread_ioctl(uint32_t request, uint32_t user_arg);
 boolean_t riscv32_native_thread_current(void);
 boolean_t riscv32_native_thread_cpu_allowed(void);

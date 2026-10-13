@@ -28,6 +28,7 @@
 #include <machine/native_sync.h>
 #include <machine/native_thread.h>
 #include <machine/copyio.h>
+#include <machine/cpu_data.h>
 #include <machine/linux_process.h>
 #include <machine/linux_signal.h>
 #include <kern/clock.h>
@@ -54,12 +55,25 @@ typedef struct {
 } native_semaphore_t;
 static native_semaphore_t objects[CARIBE_SYNC_MAX_OBJECTS];
 static decl_simple_lock_data(, sync_lock);
+/* RV32 simple locks are atomic but do not suppress same-hart kernel
+   preemption. Never switch to a competing user thread while owning this lock. */
+static void sync_lock_queue(void)
+{
+    disable_preemption();
+    simple_lock(&sync_lock);
+}
+static void sync_unlock_queue(void)
+{
+    simple_unlock(&sync_lock);
+    enable_preemption();
+}
 static volatile uint32_t initialized;
 static uint32_t waits, wakes, timeouts, acquires, releases;
 
 static void sync_init(void)
 {
     if (__sync_fetch_and_add(&initialized, 0U) == 2U) return;
+    disable_preemption();
     if (__sync_bool_compare_and_swap(&initialized, 0U, 1U)) {
         simple_lock_init(&sync_lock, 0);
         __sync_synchronize();
@@ -68,6 +82,7 @@ static void sync_init(void)
         while (__sync_fetch_and_add(&initialized, 0U) != 2U)
             __asm__ volatile("nop");
     }
+    enable_preemption();
 }
 static uint32_t object_id(uint32_t slot)
 {
@@ -96,10 +111,10 @@ void riscv32_native_sync_release_owner(uint32_t pid)
 {
     uint32_t i;
     if (!pid || __sync_fetch_and_add(&initialized, 0U) != 2U) return;
-    simple_lock(&sync_lock);
+    sync_lock_queue();
     for (i = 0; i < CARIBE_SYNC_MAX_OBJECTS; i++)
         if (objects[i].owner == pid) delete_locked(&objects[i]);
-    simple_unlock(&sync_lock);
+    sync_unlock_queue();
 }
 static int sync_wait(riscv32_linux_process_t *process, uint32_t *sequence,
     uint32_t expected, uint64_t deadline)
@@ -157,7 +172,7 @@ int riscv32_native_sync_ioctl(uint32_t request, uint32_t user_arg)
         (arg.units == 0 || arg.units > CARIBE_SYNC_MAX_VALUE)) return SYNC_INVAL;
     sync_init();
 retry:
-    simple_lock(&sync_lock);
+    sync_lock_queue();
     error = 0;
     if (arg.operation == CARIBE_SYNC_STATS) {
         arg.live = 0;
@@ -197,7 +212,7 @@ retry:
     case CARIBE_SYNC_ACQUIRE:
         if (object->value < arg.units) {
             expected = __sync_fetch_and_add(&object->sequence, 0U);
-            simple_unlock(&sync_lock);
+            sync_unlock_queue();
             if (!(arg.flags & CARIBE_SYNC_WAIT)) return SYNC_AGAIN;
             error = sync_wait(process, &object->sequence, expected, deadline);
             if (error) return error;
@@ -233,7 +248,7 @@ retry:
         error = SYNC_INVAL;
     }
 done:
-    simple_unlock(&sync_lock);
+    sync_unlock_queue();
     return error;
 output:
     error = riscv32_copyout(&arg, user_arg, sizeof(arg)) ? SYNC_FAULT : 0;

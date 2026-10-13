@@ -26,6 +26,9 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+/* CARIBEOS MODIFICATION NOTICE: h0nda1337, 2026-10-13.
+ * RV32 shared-runqueue queries honor CPU binding; original notices retained.
+ */
 #include <mach/mach_types.h>
 #include <mach/machine.h>
 #include <mach/policy.h>
@@ -196,6 +199,41 @@ static struct run_queue	global_runq_storage;
 #define GLOBAL_RUNQ		((processor_t)-2)
 decl_simple_lock_data(static,global_runq_lock);
 
+#if defined(__RISCV32__)
+struct proto_eligible_work {
+	int count;
+	int highq;
+	boolean_t urgent;
+};
+
+/* A nonempty shared queue can contain only threads bound to another CPU. */
+static struct proto_eligible_work
+sched_proto_eligible_work(processor_t processor)
+{
+	struct proto_eligible_work work = { 0, IDLEPRI, FALSE };
+	int pri;
+
+	simple_lock(&global_runq_lock);
+	for (pri = global_runq->highq; pri >= IDLEPRI; pri--) {
+		queue_t queue = global_runq->queues + pri;
+		thread_t thread;
+		for (thread = (thread_t)queue_first(queue);
+			 !queue_end(queue, (queue_entry_t)thread);
+			 thread = (thread_t)queue_next((queue_entry_t)thread)) {
+			if (thread->bound_processor != PROCESSOR_NULL &&
+				thread->bound_processor != processor)
+				continue;
+			if (work.count++ == 0)
+				work.highq = pri;
+			if (sched_proto_priority_is_urgent(pri))
+				work.urgent = TRUE;
+		}
+	}
+	simple_unlock(&global_runq_lock);
+	return work;
+}
+#endif
+
 extern int	max_unsafe_quanta;
 
 static uint32_t proto_quantum_us;
@@ -327,6 +365,12 @@ sched_proto_choose_thread(processor_t		processor,
 				thread->runqueue_generation = runqueue_generation;
 				SCHED_STATS_RUNQ_CHANGE(&rq->runq_stats, rq->count);
 				rq->count--;
+#if defined(__RISCV32__)
+				if (sched_proto_priority_is_urgent(thread->sched_pri)) {
+					rq->urgency--;
+					assert(rq->urgency >= 0);
+				}
+#endif
 				if (queue_empty(queue)) {
 					if (pri != IDLEPRI)
 						clrbit(MAXPRI - pri, rq->bitmap);
@@ -462,11 +506,15 @@ sched_proto_processor_queue_remove(
 static boolean_t
 sched_proto_processor_queue_empty(processor_t		processor __unused)
 {
+#if defined(__RISCV32__)
+	return sched_proto_eligible_work(processor).count == 0;
+#else
 	boolean_t result;
 	
 	result = (global_runq->count == 0);
 	
 	return result;
+#endif
 }
 
 static boolean_t
@@ -474,6 +522,10 @@ sched_proto_processor_queue_has_priority(processor_t		processor __unused,
 										 int				priority,
 										 boolean_t		gte)
 {
+#if defined(__RISCV32__)
+	struct proto_eligible_work work = sched_proto_eligible_work(processor);
+	return work.count > 0 && (gte ? work.highq >= priority : work.highq > priority);
+#else
 	boolean_t result;
 	
 	simple_lock(&global_runq_lock);
@@ -486,6 +538,7 @@ sched_proto_processor_queue_has_priority(processor_t		processor __unused,
 	simple_unlock(&global_runq_lock);
 	
 	return result;
+#endif
 }
 
 /* Implement sched_preempt_pri in code */
@@ -507,6 +560,12 @@ sched_proto_priority_is_urgent(int priority)
 static ast_t
 sched_proto_processor_csw_check(processor_t processor __unused)
 {
+#if defined(__RISCV32__)
+	struct proto_eligible_work work = sched_proto_eligible_work(processor);
+	if (work.count == 0)
+		return AST_NONE;
+	return work.urgent ? AST_PREEMPT | AST_URGENT : AST_PREEMPT;
+#else
 	run_queue_t		runq;
 	int				count, urgency;
 	
@@ -522,6 +581,7 @@ sched_proto_processor_csw_check(processor_t processor __unused)
 	}
 	
 	return AST_NONE;
+#endif
 }
 
 static uint32_t
@@ -578,11 +638,15 @@ sched_proto_should_current_thread_rechoose_processor(processor_t			processor)
 static int
 sched_proto_processor_runq_count(processor_t   processor)
 {
+#if defined(__RISCV32__)
+	return sched_proto_eligible_work(processor).count;
+#else
 	if (master_processor == processor) {
 		return global_runq->count;
 	} else {
 		return 0;
 	}	
+#endif
 }
 
 static uint64_t

@@ -2880,15 +2880,12 @@ riscv32_linux_exec_fork_current(riscv_saved_state_t *parent_state,
 		riscv32_early_putdec(cloned_pages);
 		riscv32_early_puts(" PASS\n");
 	} else if (gate14 && riscv32_linux_gate14_should_log_process(child)) {
-		riscv32_early_puts("[process-gate-14] child pid=");
-		riscv32_early_putdec(child->pid);
-		riscv32_early_puts(" parent=");
-		riscv32_early_putdec(parent->pid);
-		riscv32_early_puts(" bound-cpu=1 processor=0x");
-		riscv32_early_puthex32((uint32_t)(uintptr_t)target_processor);
-		riscv32_early_puts(" private-pages=");
-		riscv32_early_putdec(cloned_pages);
-		riscv32_early_puts(" PASS\n");
+		char record[160];
+		(void)snprintf(record, sizeof(record),
+		    "[process-gate-14] child pid=%u parent=%u bound-cpu=1 "
+		    "processor=0x%08x private-pages=%u PASS\n", child->pid,
+		    parent->pid, (uint32_t)(uintptr_t)target_processor, cloned_pages);
+		riscv32_early_puts(record);
 	}
 	kr = thread_resume(thread);
 	if (kr != KERN_SUCCESS) {
@@ -5811,13 +5808,12 @@ riscv32_linux_exec_replace_from_initrd(const char *path,
 		}
 		riscv32_linux_gate14_note_exec(process);
 		if (riscv32_linux_gate14_should_log_process(process)) {
-			riscv32_early_puts("[process-gate-14] exec pid=");
-			riscv32_early_putdec(process->pid);
-			riscv32_early_puts(" cpu=1 new-pmap-mask=0x");
-			riscv32_early_puthex32((uint32_t)candidate_active_mask);
-			riscv32_early_puts(" old-pmap-mask=0x");
-			riscv32_early_puthex32((uint32_t)old_active_mask);
-			riscv32_early_puts(" switch-coherent PASS\n");
+			char record[160];
+			(void)snprintf(record, sizeof(record),
+			    "[process-gate-14] exec pid=%u cpu=1 new-pmap-mask=0x%08x "
+			    "old-pmap-mask=0x%08x switch-coherent PASS\n", process->pid,
+			    (uint32_t)candidate_active_mask, (uint32_t)old_active_mask);
+			riscv32_early_puts(record);
 		}
 	} else if (gate14_driver) {
 		candidate_active_mask =

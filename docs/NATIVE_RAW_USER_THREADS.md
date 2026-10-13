@@ -38,3 +38,15 @@ per-thread TLS. See the companion runtime's
 Kernel additions/modifications remain APSL-2.0. Existing XNU/third-party
 notices and the technical `tranche-201-stage2-complete` tag are preserved.
 No Linux kernel, RV64 substitute, Wayland or X11 server is introduced.
+
+## Private Futex Follow-Up
+
+An independent `native-futex` boot option now enables real private WAIT/WAKE
+for syscall 98/time32 and 422/time64, including raw workers. Default worker
+syscall denial is unchanged without that option. A pmap/address-keyed queue
+arms XNU waits while holding the same RV32A lock as bounded WAKE. Relative
+timeouts, cancellation and owner teardown remove actual wait records; owner
+exit asserts zero queued references before releasing VM. Shared/PI/bitset/
+requeue futex operations remain ENOSYS, not success stubs. This exception to
+the raw syscall boundary does not enable pthread, clear-tid or threaded TLS.
+See the companion [private futex gates](https://github.com/h0nda1337/caribeos-runtime-rv32/blob/develop/syllable-native-v0.2/docs/SYLLABLE_PRIVATE_FUTEX.md).

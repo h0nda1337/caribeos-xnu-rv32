@@ -45,3 +45,4 @@ osfmk/riscv32/native_ipc.c	standard
 osfmk/riscv32/native_area.c	standard
 osfmk/riscv32/native_sync.c	standard
 osfmk/riscv32/native_thread.c	standard
+osfmk/riscv32/native_futex.c	standard

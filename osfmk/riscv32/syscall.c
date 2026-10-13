@@ -84,6 +84,9 @@ riscv32_syscall_dispatch(riscv_saved_state_t *state, int user_mode)
 	   Their libc/pthread and GNU TLS contract is a separate later gate. */
 	if (riscv32_native_thread_current()) {
 		if ((syscall_class == RISCV32_SYSCALL_CLASS_NONE || syscall_class == RISCV32_SYSCALL_CLASS_LINUX) &&
+		    (syscall_number == 98U || syscall_number == 422U) &&
+		    riscv32_native_futex_dispatch(state, syscall_number == 422U)) return TRUE;
+		if ((syscall_class == RISCV32_SYSCALL_CLASS_NONE || syscall_class == RISCV32_SYSCALL_CLASS_LINUX) &&
 		    syscall_number == 93U) riscv32_native_thread_exit(state->thread.x[RISCV_X_A0]);
 		riscv32_syscall_return_errno(state, 95U);
 		return TRUE;
