@@ -33,6 +33,9 @@
 #line 1
 #include <machine/syscall.h>
 #include <machine/linux_syscall.h>
+#include <machine/native_thread.h>
+#include <machine/native_sync.h>
+#include <kern/thread.h>
 
 #define RISCV32_ECALL_SIZE	4U
 #define RISCV32_ENOSYS		38U
@@ -69,6 +72,22 @@ riscv32_syscall_dispatch(riscv_saved_state_t *state, int user_mode)
 	(void)syscall_number;
 
 	riscv32_syscall_advance_pc(state);
+	if (raw_number == CARIBE_THREAD_ECALL || raw_number == CARIBE_THREAD_SYNC_ECALL) {
+		uint32_t error = raw_number == CARIBE_THREAD_ECALL ?
+		    riscv32_native_thread_ioctl(CARIBE_THREAD_CALL, state->thread.x[RISCV_X_A0]) :
+		    riscv32_native_sync_ioctl(CARIBE_SYNC_CALL, state->thread.x[RISCV_X_A0]);
+		if (error) riscv32_syscall_return_errno(state, error);
+		else state->thread.x[RISCV_X_A0] = state->thread.x[RISCV_X_A1] = 0;
+		return TRUE;
+	}
+	/* Raw threads must not alias the main thread's Linux signal/FD/VM state.
+	   Their libc/pthread and GNU TLS contract is a separate later gate. */
+	if (riscv32_native_thread_current()) {
+		if ((syscall_class == RISCV32_SYSCALL_CLASS_NONE || syscall_class == RISCV32_SYSCALL_CLASS_LINUX) &&
+		    syscall_number == 93U) riscv32_native_thread_exit(state->thread.x[RISCV_X_A0]);
+		riscv32_syscall_return_errno(state, 95U);
+		return TRUE;
+	}
 
 	switch (syscall_class) {
 	case RISCV32_SYSCALL_CLASS_NONE:

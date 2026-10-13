@@ -32,6 +32,7 @@
 
 #line 1
 #include <kern/ast.h>
+#include <machine/native_thread.h>
 #include <kern/debug.h>
 #include <kern/thread.h>
 #include <machine/copyio.h>
@@ -95,6 +96,8 @@ riscv32_trap_dispatch(riscv_saved_state_t *state)
 
 	state->trapno = code;
 	if (user_mode) {
+		current_thread()->machine.user_tp = state->thread.x[RISCV_X_TP];
+		current_thread()->machine.user_gp = state->thread.x[RISCV_X_GP];
 		process = riscv32_linux_process_current();
 		if (!riscv32_linux_process_current_cpu_allowed(process)) {
 			panic("riscv32: userspace trap violated CPU affinity cpu=%d pid=%u affinity=%u",
@@ -111,6 +114,7 @@ riscv32_trap_dispatch(riscv_saved_state_t *state)
 			return;
 		}
 		riscv32_interrupt(state);
+		if (user_mode) riscv32_native_thread_user_boundary();
 		return;
 	}
 
@@ -121,9 +125,10 @@ riscv32_trap_dispatch(riscv_saved_state_t *state)
 
 	if ((code == T_ECALL_U || code == T_ECALL_S) &&
 	    riscv32_syscall_dispatch(state, user_mode)) {
-		if (user_mode) {
+		if (user_mode && !riscv32_native_thread_current()) {
 			(void)riscv32_linux_signal_deliver_pending(state);
 		}
+		if (user_mode) riscv32_native_thread_user_boundary();
 		return;
 	}
 
@@ -192,6 +197,8 @@ void
 riscv32_user_trap(riscv_saved_state_t *state)
 {
 	const riscv32_user_exception_t *exception;
+	if (riscv32_native_thread_current())
+		riscv32_native_thread_fault();
 
 	exception = riscv32_user_exception_record(state);
 	if (riscv32_linux_signal_handle_user_exception(state)) {

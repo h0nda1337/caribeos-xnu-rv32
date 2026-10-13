@@ -1777,6 +1777,15 @@ pmap_extract(pmap_t pmap, vm_map_offset_t va)
 	    ((uint32_t)va & offset_mask));
 }
 
+boolean_t
+riscv32_pmap_user_execute_accessible(pmap_t pmap, vm_map_offset_t va)
+{
+	pt_entry_t leaf;
+	return pmap != PMAP_NULL && va != 0 && va < VM_MAX_ADDRESS &&
+	    riscv32_pmap_leaf_for_va(pmap, va, &leaf, (uint32_t *)0) &&
+	    (leaf & (RISCV32_PTE_U | RISCV32_PTE_X)) == (RISCV32_PTE_U | RISCV32_PTE_X);
+}
+
 kern_return_t
 riscv32_pmap_clone_user_eager(pmap_t source, pmap_t destination,
     riscv32_pmap_eager_clone_allocator_t allocator, void *context,

@@ -44,6 +44,7 @@
 #include <machine/early_print.h>
 #include <machine/linux_exec.h>
 #include <machine/linux_process.h>
+#include <machine/native_thread.h>
 #include <machine/thread.h>
 #include <machine/pal_routines.h>
 #include <machine/trap.h>
@@ -312,6 +313,8 @@ thread_bootstrap_return(void)
 	uint32_t cpu;
 	cpu_set active_mask;
 	boolean_t verbose_entry;
+
+	if (riscv32_native_thread_current()) riscv32_native_thread_bootstrap();
 
 	if (thread == THREAD_NULL || process == (riscv32_linux_process_t *)0 ||
 	    process->main_thread != thread || process->task != thread->task ||

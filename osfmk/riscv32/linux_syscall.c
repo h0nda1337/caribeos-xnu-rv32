@@ -41,6 +41,7 @@
 #include <machine/native_ipc.h>
 #include <machine/native_area.h>
 #include <machine/native_sync.h>
+#include <machine/native_thread.h>
 #include <machine/cpu_data.h>
 #include <machine/early_print.h>
 #include <machine/linux_exec.h>
@@ -7001,7 +7002,14 @@ riscv32_linux_sys_ioctl(riscv_saved_state_t *state)
 		return TRUE;
 	}
 	if (source.kind == RISCV32_LINUX_FD_NATIVE_IPC) {
-		uint32_t ipc_error = (uint32_t)(request == CARIBE_AREA_CALL ?
+		uint32_t ipc_error;
+		process = riscv32_linux_process_current();
+		if (request == CARIBE_AREA_CALL && process && riscv32_native_thread_owner_busy(process->pid)) {
+			riscv32_linux_return_errno(state, 16U);
+			return TRUE;
+		}
+		ipc_error = (uint32_t)(request == CARIBE_THREAD_CALL ?
+		    riscv32_native_thread_ioctl(request, arg) : request == CARIBE_AREA_CALL ?
 		    riscv32_native_area_ioctl(request, arg) : request == CARIBE_SYNC_CALL ?
 		    riscv32_native_sync_ioctl(request, arg) : riscv32_native_ipc_ioctl(request, arg));
 		if (ipc_error) riscv32_linux_return_errno(state, ipc_error);
@@ -11412,6 +11420,8 @@ riscv32_linux_terminate_current(uint32_t status, uint32_t signal)
 		panic("riscv32: PID %u cannot enter EXITING", process->pid);
 	}
 	resources = &process->exit_resources;
+	/* Extra user threads must be gone before their shared pmap/FDs disappear. */
+	riscv32_native_thread_release_owner(process->pid);
 	riscv32_linux_syscall_teardown_process(process, resources);
 	if (!riscv32_linux_process_detach_xnu(process, &task, &thread,
 	    &pmap)) {
@@ -11482,6 +11492,24 @@ riscv32_linux_syscall_dispatch(riscv_saved_state_t *state,
 {
 	if (state == (riscv_saved_state_t *)0) {
 		return FALSE;
+	}
+	{
+		riscv32_linux_process_t *process = riscv32_linux_process_current();
+		if (process && riscv32_native_thread_owner_busy(process->pid)) {
+			switch (syscall_number) {
+			case RISCV32_LINUX_SYS_CLONE:
+			case RISCV32_LINUX_SYS_EXECVE:
+			case RISCV32_LINUX_SYS_EXECVEAT:
+			case RISCV32_LINUX_SYS_BRK:
+			case RISCV32_LINUX_SYS_MMAP:
+			case RISCV32_LINUX_SYS_MUNMAP:
+			case RISCV32_LINUX_SYS_MPROTECT:
+			case RISCV32_LINUX_SYS_MREMAP:
+				riscv32_linux_return_errno(state, 16U);
+				return TRUE;
+			default: break;
+			}
+		}
 	}
 
 	switch (syscall_number) {

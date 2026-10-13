@@ -26,6 +26,7 @@
  * waits and RV32A ordering. This does not implement native user threads.
  */
 #include <machine/native_sync.h>
+#include <machine/native_thread.h>
 #include <machine/copyio.h>
 #include <machine/linux_process.h>
 #include <machine/linux_signal.h>
@@ -103,23 +104,25 @@ void riscv32_native_sync_release_owner(uint32_t pid)
 static int sync_wait(riscv32_linux_process_t *process, uint32_t *sequence,
     uint32_t expected, uint64_t deadline)
 {
-    if (riscv32_linux_signal_has_deliverable(process)) return SYNC_INTR;
-    if (!riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_SLEEPING))
+    boolean_t native = riscv32_native_thread_current();
+    if (native && !current_thread()->active) return SYNC_INTR;
+    if (!native && riscv32_linux_signal_has_deliverable(process)) return SYNC_INTR;
+    if (!native && !riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_SLEEPING))
         panic("riscv32: native sync cannot sleep");
     assert_wait_deadline((event_t)sequence, THREAD_UNINT, deadline);
     __sync_synchronize();
     if (__sync_fetch_and_add(sequence, 0U) == expected &&
-        !riscv32_linux_signal_has_deliverable(process)) {
+        (native ? current_thread()->active : !riscv32_linux_signal_has_deliverable(process))) {
         __sync_add_and_fetch(&waits, 1U);
         thread_block(THREAD_CONTINUE_NULL);
         __sync_add_and_fetch(&wakes, 1U);
     } else {
         (void)clear_wait(current_thread(), THREAD_AWAKENED);
     }
-    if (!riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_RUNNABLE) ||
-        !riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_RUNNING))
+    if (!native && (!riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_RUNNABLE) ||
+        !riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_RUNNING)))
         panic("riscv32: native sync cannot resume");
-    if (riscv32_linux_signal_has_deliverable(process)) return SYNC_INTR;
+    if (native ? !current_thread()->active : riscv32_linux_signal_has_deliverable(process)) return SYNC_INTR;
     if (mach_absolute_time() >= deadline) {
         __sync_add_and_fetch(&timeouts, 1U);
         return SYNC_TIMEDOUT;
@@ -203,7 +206,7 @@ retry:
         }
         arg.value = object->value - arg.units;
         arg.owner = object->owner;
-        arg.holder = process->pid; /* One native user thread per process currently. */
+        arg.holder = riscv32_native_thread_identity();
         if (riscv32_copyout(&arg, user_arg, sizeof(arg))) { error = SYNC_FAULT; break; }
         object->value = arg.value;
         object->holder = arg.holder;

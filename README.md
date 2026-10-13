@@ -24,6 +24,10 @@ backend and corrects private userspace brk/mmap backing. See
 [graphics development](docs/GRAPHICS_V0_1.md). Syllable component rendering
 lives in the runtime; no Linux kernel, Wayland server or X11 server is added.
 
+`develop/syllable-native-v0.2` adds native IPC/areas/semaphores and
+[opt-in raw shared-task user threads](docs/NATIVE_RAW_USER_THREADS.md).
+Threaded musl/GNU TLS and complete Syllable AppServer/Desktop remain pending.
+
 ## Boot Contract
 
 The supported boot chain is fixed:

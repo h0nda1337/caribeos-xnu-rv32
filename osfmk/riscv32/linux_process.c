@@ -35,6 +35,7 @@
 #include <machine/bootinfo.h>
 #include <machine/cpu_data.h>
 #include <machine/linux_process.h>
+#include <machine/native_thread.h>
 #include <kern/debug.h>
 #include <kern/task.h>
 #include <kern/thread.h>
@@ -416,10 +417,12 @@ riscv32_linux_process_current_cpu_allowed(riscv32_linux_process_t *process)
 	if (process == (riscv32_linux_process_t *)0 ||
 	    process->magic != RISCV32_LINUX_PROCESS_MAGIC ||
 	    process->in_table == 0U || thread == THREAD_NULL ||
-	    cpu_data == (cpu_data_t *)0 || process->main_thread != thread ||
+	    cpu_data == (cpu_data_t *)0 ||
 	    process->task != thread->task) {
 		return FALSE;
 	}
+	if (process->main_thread != thread)
+		return riscv32_native_thread_cpu_allowed();
 	cpu = (uint32_t)cpu_data->cpu_number;
 	affinity = __sync_fetch_and_add(&process->affinity_cpu, 0U);
 	flags = __sync_fetch_and_add(&process->flags, 0U);

@@ -74,6 +74,9 @@ struct machine_thread {
 	int			copyio_error;
 	struct pmap		*user_pmap;
 	uint32_t		*deallocate_sequence;
+	void			*native_context;
+	uint32_t		user_tp;
+	uint32_t		user_gp;
 };
 
 typedef struct machine_thread *pcb_t;

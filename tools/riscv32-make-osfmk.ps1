@@ -1,6 +1,8 @@
+[CmdletBinding(PositionalBinding = $false)]
 param(
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$Target = @("pmap.o")
+    [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
+    [string[]]$Target = @("pmap.o"),
+    [string]$ForceRiscv32Sources = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +13,17 @@ if ($Target.Count -eq 0) {
 
 $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $repo = (Resolve-Path (Join-Path $scriptRoot "..")).Path
+if ($ForceRiscv32Sources) {
+    $forced = @()
+    foreach ($name in $ForceRiscv32Sources.Split(',')) {
+        if ($name -notmatch '^[a-z][a-z0-9_]*$') { throw "Invalid RV32 source name" }
+        $source = Join-Path $repo "osfmk/riscv32/$name.c"
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing source: $source" }
+        $forced += @("-W", $source.Replace('\', '/'))
+    }
+    # Keep GNU make's -W inside the script, away from PowerShell common parameters.
+    $Target = $forced + $Target
+}
 $workspace = Split-Path -Parent $repo
 $obj = Join-Path $repo "BUILD\obj\RELEASE_RISCV32\osfmk\RELEASE"
 $tmp = Join-Path $workspace "tmp"

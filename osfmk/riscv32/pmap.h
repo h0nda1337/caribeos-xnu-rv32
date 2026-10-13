@@ -168,6 +168,7 @@ extern kern_return_t riscv32_pmap_bootstrap_map_user(vm_map_offset_t va,
     ppnum_t pa, uint32_t page_count, vm_prot_t prot);
 extern boolean_t riscv32_pmap_user_range_accessible(pmap_t pmap,
     vm_map_offset_t va, vm_size_t len, boolean_t write);
+extern boolean_t riscv32_pmap_user_execute_accessible(pmap_t pmap, vm_map_offset_t va);
 extern pmap_t riscv32_pmap_current(void);
 extern void riscv32_pmap_set_current(pmap_t pmap);
 extern void riscv32_pmap_activate(pmap_t pmap, int cpu);
