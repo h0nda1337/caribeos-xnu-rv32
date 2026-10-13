@@ -28,6 +28,7 @@
  * CARIBEOS MODIFICATION NOTICE
  * This file was created as part of the experimental CaribeOS RV32IMACSU
  * port of Apple XNU 2050.48.11 on 2026-07-14.
+ * 2026-10-12: keep secondary startup timer deadlines stable across idle polls.
  */
 
 #line 1
@@ -35,6 +36,7 @@
 #include <mach/machine.h>
 #include <kern/clock.h>
 #include <kern/debug.h>
+#include <kern/etimer.h>
 #include <kern/machine.h>
 #include <kern/processor.h>
 #include <kern/startup.h>
@@ -143,7 +145,7 @@ slave_machine_init(void *machine_param)
 	__asm__ volatile("csrc sip, %0" :: "r"(ssie) : "memory");
 	__asm__ volatile("csrs sie, %0" :: "r"(ssie) : "memory");
 	riscv32_timer_enable();
-	riscv32_sbi_set_timer(riscv32_timer_read() + 100000U);
+	etimer_set_deadline(mach_absolute_time() + 1000000ULL);
 	cpu_data->cpu_running = TRUE;
 	cpu_data->cpu_boot_complete = TRUE;
 	cpu_data->cpu_iflag = TRUE;
@@ -747,7 +749,11 @@ machine_idle(void)
 	(void)__sync_add_and_fetch(&cpu_data->cpu_idle_count, 1);
 	if (cpu_data->cpu_number != 0 &&
 	    cpu_data->cpu_timer_interrupt_count == 0) {
-		riscv32_sbi_set_timer(riscv32_timer_read() + 1000U);
+		uint64_t first_deadline = mach_absolute_time() + 1000000ULL;
+		/* Preserve earlier deadlines, including a pending first idle interrupt. */
+		if (cpu_data->rtclock_timer.deadline > first_deadline) {
+			etimer_set_deadline(first_deadline);
+		}
 	}
 	/*
 	 * Gate 14 repeatedly hands a freshly runnable, CPU-bound user thread to

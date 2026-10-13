@@ -28,6 +28,7 @@
  * CARIBEOS MODIFICATION NOTICE
  * This file was created as part of the experimental CaribeOS RV32IMACSU
  * port of Apple XNU 2050.48.11 on 2026-07-14.
+ * 2026-10-12: bound the first secondary timer verification by elapsed time.
  */
 
 #line 1
@@ -1471,7 +1472,7 @@ riscv32_smp_scheduler_start(void)
 	kern_return_t kr;
 	uint32_t slot = 1;
 	uint32_t stage;
-	uint32_t tries;
+	uint64_t timer_wait_started;
 	boolean_t passed;
 	boolean_t gate_d_passed;
 	boolean_t gate_e_passed;
@@ -1516,7 +1517,10 @@ riscv32_smp_scheduler_start(void)
 	if (stage >= 6 && stage != 0xff) {
 		riscv32_smp_gate_a_print(slot);
 	}
-	for (tries = 0; tries < 20000000; tries++) {
+	/* Host/TCG speed must not decide whether the first local timer has fired. */
+	timer_wait_started = mach_absolute_time();
+	while (mach_absolute_time() - timer_wait_started < 1000000000ULL) {
+		__sync_synchronize();
 		if (cpu_data->cpu_idle_count != 0 &&
 		    cpu_data->cpu_timer_interrupt_count != 0) {
 			break;
