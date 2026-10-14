@@ -28,11 +28,13 @@
  * CARIBEOS MODIFICATION NOTICE
  * Created for the experimental CaribeOS XNU RV32 port on 2026-10-12.
  * Bounded message ports with scheduler waits and process-owned lifecycle.
+ * Modified 2026-10-13: independent native-thread waits and preemption-safe locks.
  */
 #include <machine/native_ipc.h>
 #include <machine/copyio.h>
 #include <machine/linux_process.h>
 #include <machine/linux_signal.h>
+#include <machine/native_thread.h>
 #include <kern/clock.h>
 #include <kern/misc_protos.h>
 #include <kern/sched_prim.h>
@@ -65,12 +67,24 @@ typedef struct {
 static caribe_ipc_port_t ports[CARIBE_IPC_MAX_PORTS];
 static ipc_message_t messages[CARIBE_IPC_MAX_MESSAGES];
 static decl_simple_lock_data(, ipc_lock);
+/* Raw native threads can compete on the same hart at kernel preemption points. */
+static void ipc_lock_queue(void)
+{
+    disable_preemption();
+    simple_lock(&ipc_lock);
+}
+static void ipc_unlock_queue(void)
+{
+    simple_unlock(&ipc_lock);
+    enable_preemption();
+}
 static volatile uint32_t initialized;
 static uint32_t sends, receives, server_id, blocks, wakeups, timeouts;
 
 static void ipc_init(void)
 {
     if (__sync_fetch_and_add(&initialized, 0U) == 2U) return;
+    disable_preemption();
     if (__sync_bool_compare_and_swap(&initialized, 0U, 1U)) {
         simple_lock_init(&ipc_lock, 0);
         __sync_synchronize();
@@ -79,6 +93,7 @@ static void ipc_init(void)
         while (__sync_fetch_and_add(&initialized, 0U) != 2U)
             __asm__ volatile("nop");
     }
+    enable_preemption();
 }
 
 static uint32_t port_id(uint32_t slot)
@@ -128,31 +143,32 @@ void riscv32_native_ipc_release_owner(uint32_t pid)
 {
     uint32_t i;
     if (pid == 0U || __sync_fetch_and_add(&initialized, 0U) != 2U) return;
-    simple_lock(&ipc_lock);
+    ipc_lock_queue();
     for (i = 0; i < CARIBE_IPC_MAX_PORTS; i++)
         if (ports[i].owner == pid) delete_port_locked(i);
-    simple_unlock(&ipc_lock);
+    ipc_unlock_queue();
 }
 
 static int port_wait(riscv32_linux_process_t *process, uint32_t *sequence,
     uint32_t expected, uint64_t deadline)
 {
-    if (riscv32_linux_signal_has_deliverable(process)) return IPC_INTR;
-    if (!riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_SLEEPING))
+    boolean_t native = riscv32_native_thread_current();
+    if (native ? !current_thread()->active : riscv32_linux_signal_has_deliverable(process)) return IPC_INTR;
+    if (!native && !riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_SLEEPING))
         panic("riscv32: IPC cannot sleep");
     assert_wait_deadline((event_t)sequence, THREAD_UNINT, deadline);
     __sync_synchronize();
     if (__sync_fetch_and_add(sequence, 0U) == expected &&
-        !riscv32_linux_signal_has_deliverable(process)) {
+        (native ? current_thread()->active : !riscv32_linux_signal_has_deliverable(process))) {
         __sync_add_and_fetch(&blocks, 1U);
         thread_block(THREAD_CONTINUE_NULL);
         __sync_add_and_fetch(&wakeups, 1U);
     } else
         (void)clear_wait(current_thread(), THREAD_AWAKENED);
-    if (!riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_RUNNABLE) ||
-        !riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_RUNNING))
+    if (!native && (!riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_RUNNABLE) ||
+        !riscv32_linux_process_transition(process, RISCV32_LINUX_PROCESS_RUNNING)))
         panic("riscv32: IPC cannot resume");
-    if (riscv32_linux_signal_has_deliverable(process)) return IPC_INTR;
+    if (native ? !current_thread()->active : riscv32_linux_signal_has_deliverable(process)) return IPC_INTR;
     if (mach_absolute_time() >= deadline) {
         __sync_add_and_fetch(&timeouts, 1U);
         return IPC_TIMEDOUT;
@@ -170,6 +186,7 @@ int riscv32_native_ipc_ioctl(uint32_t request, uint32_t user_arg)
     int error;
     if (request != CARIBE_IPC_CALL) return IPC_NOTTY;
     if (!process) return IPC_PERM;
+    if (riscv32_native_thread_current() && !riscv32_native_thread_cpu_allowed()) return IPC_PERM;
     if (riscv32_copyin(user_arg, &arg, sizeof(arg))) return IPC_FAULT;
     if (arg.abi != CARIBE_IPC_ABI || (arg.flags & ~CARIBE_IPC_WAIT)) return IPC_INVAL;
     timeout = ((uint64_t)arg.timeout_high << 32) | arg.timeout_low;
@@ -182,7 +199,7 @@ int riscv32_native_ipc_ioctl(uint32_t request, uint32_t user_arg)
     }
     ipc_init();
 retry:
-    simple_lock(&ipc_lock);
+    ipc_lock_queue();
     error = 0;
     if (arg.operation == CARIBE_IPC_STATS) {
         arg.ports = arg.messages = 0;
@@ -340,14 +357,14 @@ retry:
     default: error = IPC_INVAL;
     }
 done:
-    simple_unlock(&ipc_lock);
+    ipc_unlock_queue();
     return error;
 output:
     error = riscv32_copyout(&arg, user_arg, sizeof(arg)) ? IPC_FAULT : 0;
     goto done;
 unavailable:
     expected = __sync_fetch_and_add(sequence, 0U);
-    simple_unlock(&ipc_lock);
+    ipc_unlock_queue();
     if (!(arg.flags & CARIBE_IPC_WAIT)) return IPC_AGAIN;
     error = port_wait(process, sequence, expected, deadline);
     if (error) return error;

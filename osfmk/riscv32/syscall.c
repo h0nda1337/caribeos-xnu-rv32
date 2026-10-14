@@ -28,6 +28,7 @@
  * CARIBEOS MODIFICATION NOTICE
  * This file was created as part of the experimental CaribeOS RV32IMACSU
  * port of Apple XNU 2050.48.11 on 2026-07-14.
+ * Modified 2026-10-13: native port ECALL, without broadening Linux worker syscalls.
  */
 
 #line 1
@@ -35,6 +36,7 @@
 #include <machine/linux_syscall.h>
 #include <machine/native_thread.h>
 #include <machine/native_sync.h>
+#include <machine/native_ipc.h>
 #include <kern/thread.h>
 
 #define RISCV32_ECALL_SIZE	4U
@@ -72,10 +74,13 @@ riscv32_syscall_dispatch(riscv_saved_state_t *state, int user_mode)
 	(void)syscall_number;
 
 	riscv32_syscall_advance_pc(state);
-	if (raw_number == CARIBE_THREAD_ECALL || raw_number == CARIBE_THREAD_SYNC_ECALL) {
-		uint32_t error = raw_number == CARIBE_THREAD_ECALL ?
-		    riscv32_native_thread_ioctl(CARIBE_THREAD_CALL, state->thread.x[RISCV_X_A0]) :
-		    riscv32_native_sync_ioctl(CARIBE_SYNC_CALL, state->thread.x[RISCV_X_A0]);
+	if (raw_number == CARIBE_THREAD_ECALL || raw_number == CARIBE_THREAD_SYNC_ECALL ||
+	    raw_number == CARIBE_THREAD_IPC_ECALL) {
+		uint32_t user_arg = state->thread.x[RISCV_X_A0];
+		uint32_t error;
+		if (raw_number == CARIBE_THREAD_ECALL) error = riscv32_native_thread_ioctl(CARIBE_THREAD_CALL, user_arg);
+		else if (raw_number == CARIBE_THREAD_SYNC_ECALL) error = riscv32_native_sync_ioctl(CARIBE_SYNC_CALL, user_arg);
+		else error = riscv32_native_ipc_ioctl(CARIBE_IPC_CALL, user_arg);
 		if (error) riscv32_syscall_return_errno(state, error);
 		else state->thread.x[RISCV_X_A0] = state->thread.x[RISCV_X_A1] = 0;
 		return TRUE;
