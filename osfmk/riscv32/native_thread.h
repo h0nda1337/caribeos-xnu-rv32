@@ -30,6 +30,7 @@
 #define CARIBE_THREAD_ECALL 0x05000001U
 #define CARIBE_THREAD_SYNC_ECALL 0x05000002U
 #define CARIBE_THREAD_IPC_ECALL 0x05000003U
+#define CARIBE_THREAD_VM_ECALL 0x05000004U
 #define CARIBE_THREAD_CREATE 1U
 #define CARIBE_THREAD_START 2U
 #define CARIBE_THREAD_JOIN 3U
@@ -41,6 +42,17 @@
 #define CARIBE_THREAD_YIELD 9U
 #define CARIBE_THREAD_CLOCK 10U
 #define CARIBE_THREAD_SLEEP 11U
+#define CARIBE_THREAD_HEAP_ENTER 12U
+#define CARIBE_THREAD_HEAP_LEAVE 13U
+#define CARIBE_THREAD_HEAP_FEATURE 3U
+#define CARIBE_THREAD_HEAP_ENTERS 4U
+#define CARIBE_THREAD_HEAP_LEAVES 5U
+#define CARIBE_THREAD_HEAP_DEFERRED 6U
+#define CARIBE_THREAD_HEAP_ENABLED 1U
+#define CARIBE_THREAD_HEAP_CANCEL_ACK 1U
+#define CARIBE_THREAD_HEAP_WAITERS 7U
+#define CARIBE_THREAD_HEAP_ABORTED 8U
+#define CARIBE_THREAD_HEAP_ACTIVE 9U
 /* CLOCK output only: reserved[0:1] contain monotonic nanoseconds, low/high.
    All reserved words must still be zero on input for every operation. */
 #define CARIBE_THREAD_TIME_LOW 0U
@@ -70,6 +82,8 @@ boolean_t riscv32_native_thread_current(void);
 boolean_t riscv32_native_thread_cpu_allowed(void);
 uint32_t riscv32_native_thread_identity(void);
 boolean_t riscv32_native_thread_owner_busy(uint32_t pid);
+boolean_t riscv32_native_heap_enabled(void);
+boolean_t riscv32_native_thread_user_range_busy(uint32_t pid, uint32_t address, uint32_t length);
 void riscv32_native_thread_bootstrap(void) __attribute__((noreturn));
 void riscv32_native_thread_exit(uint32_t status) __attribute__((noreturn));
 void riscv32_native_thread_fault(void) __attribute__((noreturn));

@@ -68,6 +68,7 @@ typedef struct riscv32_linux_pipe_stats {
 
 boolean_t riscv32_linux_syscall_dispatch(riscv_saved_state_t *state,
     uint32_t syscall_number);
+boolean_t riscv32_linux_native_heap_dispatch(riscv_saved_state_t *state);
 void riscv32_linux_syscall_teardown_process(
     struct riscv32_linux_process *process,
     struct riscv32_linux_exit_resources *resources);

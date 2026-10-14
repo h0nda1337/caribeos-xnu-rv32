@@ -29,6 +29,7 @@
  * This file was created as part of the experimental CaribeOS RV32IMACSU
  * port of Apple XNU 2050.48.11 on 2026-07-14.
  * Modified 2026-10-13: native port ECALL, without broadening Linux worker syscalls.
+ * Modified 2026-10-14: opt-in bounded allocator VM channel, separate from Linux worker syscalls.
  */
 
 #line 1
@@ -74,6 +75,7 @@ riscv32_syscall_dispatch(riscv_saved_state_t *state, int user_mode)
 	(void)syscall_number;
 
 	riscv32_syscall_advance_pc(state);
+	if (raw_number == CARIBE_THREAD_VM_ECALL) return riscv32_linux_native_heap_dispatch(state);
 	if (raw_number == CARIBE_THREAD_ECALL || raw_number == CARIBE_THREAD_SYNC_ECALL ||
 	    raw_number == CARIBE_THREAD_IPC_ECALL) {
 		uint32_t user_arg = state->thread.x[RISCV_X_A0];

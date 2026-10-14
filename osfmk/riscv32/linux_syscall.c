@@ -31,6 +31,8 @@
  * 2026-10-12: native graphics ioctls and isolated managed brk/mmap backing.
  * Cross-hart clone/wait records and user console chunks use atomic writes.
  * 2026-10-13: native counting semaphores and real clock_nanosleep waits.
+ * 2026-10-14: opt-in bounded native allocator VM and preemption-safe VM serialization.
+ * 2026-10-14: emit exec-argument and waitid-option gate records atomically across harts.
  */
 
 #line 1
@@ -535,6 +537,7 @@ static simple_lock_data_t riscv32_linux_ofd_locks[RISCV32_LINUX_OFD_MAX];
 static decl_simple_lock_data(, riscv32_linux_ofd_pool_lock)
 static volatile uint32_t riscv32_linux_ofd_init_state;
 static decl_simple_lock_data(, riscv32_linux_vm_scratch_lock)
+static decl_simple_lock_data(, riscv32_linux_vm_call_lock)
 static riscv32_linux_ofd_stats_t riscv32_linux_ofd_stats;
 static uint8_t riscv32_linux_mmap_pages[RISCV32_LINUX_MMAP_MAX_PAGES]
     [RISCV32_LINUX_MMAP_PAGE_SIZE]
@@ -703,11 +706,13 @@ riscv32_linux_ofd_init(void)
 	if (__sync_fetch_and_add(&riscv32_linux_ofd_init_state, 0U) == 2U) {
 		return;
 	}
+	disable_preemption();
 	if (__sync_bool_compare_and_swap(&riscv32_linux_ofd_init_state,
 	    0U, 1U)) {
 		simple_lock_init(&riscv32_linux_ofd_pool_lock, 0);
 		simple_lock_init(&riscv32_linux_pipe_pool_lock, 0);
 		simple_lock_init(&riscv32_linux_vm_scratch_lock, 0);
+		simple_lock_init(&riscv32_linux_vm_call_lock, 0);
 		riscv32_linux_zero(riscv32_linux_pipes,
 		    sizeof(riscv32_linux_pipes));
 		riscv32_linux_zero(riscv32_linux_ofd_pool,
@@ -729,11 +734,13 @@ riscv32_linux_ofd_init(void)
 		riscv32_linux_pipe_stats.capacity = RISCV32_LINUX_PIPE_MAX;
 		__sync_synchronize();
 		riscv32_linux_ofd_init_state = 2U;
+		enable_preemption();
 		return;
 	}
 	while (__sync_fetch_and_add(&riscv32_linux_ofd_init_state, 0U) != 2U) {
 		__asm__ volatile("nop");
 	}
+	enable_preemption();
 }
 
 static riscv32_linux_fd_t *
@@ -9191,6 +9198,84 @@ riscv32_linux_sys_mremap(riscv_saved_state_t *state)
 }
 
 static boolean_t
+riscv32_linux_vm_call_dispatch(riscv_saved_state_t *state, uint32_t number, boolean_t native)
+{
+	boolean_t result;
+	disable_preemption();
+	riscv32_linux_ofd_init();
+	simple_lock(&riscv32_linux_vm_call_lock);
+	if (native && (number == RISCV32_LINUX_SYS_MUNMAP || number == RISCV32_LINUX_SYS_MPROTECT)) {
+		uint32_t length = state->thread.x[RISCV_X_A1];
+		if (!length || length > UINT32_MAX - (RISCV32_LINUX_MMAP_PAGE_SIZE - 1U)) {
+			riscv32_linux_return_errno(state, RISCV32_LINUX_EINVAL);
+			result = TRUE; goto out;
+		}
+		if (riscv32_native_thread_user_range_busy(riscv32_linux_process_current()->pid,
+		    state->thread.x[RISCV_X_A0], riscv32_linux_page_up(length))) {
+			riscv32_linux_return_errno(state, 16U);
+			result = TRUE; goto out;
+		}
+	}
+	switch (number) {
+	case RISCV32_LINUX_SYS_BRK: result = riscv32_linux_sys_brk(state); break;
+	case RISCV32_LINUX_SYS_MMAP: result = riscv32_linux_sys_mmap(state); break;
+	case RISCV32_LINUX_SYS_MUNMAP: result = riscv32_linux_sys_munmap(state); break;
+	case RISCV32_LINUX_SYS_MPROTECT: result = riscv32_linux_sys_mprotect(state); break;
+	case RISCV32_LINUX_SYS_MREMAP: result = riscv32_linux_sys_mremap(state); break;
+	default: result = FALSE; break;
+	}
+out:
+	simple_unlock(&riscv32_linux_vm_call_lock);
+	enable_preemption();
+	return result;
+}
+
+boolean_t
+riscv32_linux_native_heap_dispatch(riscv_saved_state_t *state)
+{
+	riscv32_linux_process_t *process = riscv32_linux_process_current();
+	uint32_t number, address, length, prot, flags;
+	if (!state) return FALSE;
+	if (!riscv32_native_heap_enabled()) {
+		riscv32_linux_return_errno(state, 95U); return TRUE;
+	}
+	if (!process || get_cpu_number() != 0 || !riscv32_linux_process_current_cpu_allowed(process)) {
+		riscv32_linux_return_errno(state, 1U); return TRUE;
+	}
+	number = state->thread.x[RISCV_X_A6];
+	address = state->thread.x[RISCV_X_A0];
+	length = state->thread.x[RISCV_X_A1];
+	prot = state->thread.x[RISCV_X_A2];
+	flags = state->thread.x[RISCV_X_A3];
+	if (number == RISCV32_LINUX_SYS_BRK) return riscv32_linux_vm_call_dispatch(state, number, TRUE);
+	if (number == RISCV32_LINUX_SYS_MREMAP) {
+		/* The legacy shrink-only stub is not a real allocator mremap contract. */
+		riscv32_linux_return_errno(state, RISCV32_LINUX_ENOSYS); return TRUE;
+	}
+	if (number != RISCV32_LINUX_SYS_MMAP && number != RISCV32_LINUX_SYS_MUNMAP && number != RISCV32_LINUX_SYS_MPROTECT) {
+		riscv32_linux_return_errno(state, 95U); return TRUE;
+	}
+	if (number == RISCV32_LINUX_SYS_MMAP) {
+		/* Only anonymous non-fixed RW heap reservations, never file/execute maps.
+		   PROT_NONE guards are unsupported here, not falsely reported as working. */
+		if (address || flags != (RISCV32_LINUX_MAP_PRIVATE | RISCV32_LINUX_MAP_ANONYMOUS) ||
+		    prot != 3U || state->thread.x[RISCV_X_A4] != UINT32_MAX || state->thread.x[RISCV_X_A5]) {
+			riscv32_linux_return_errno(state, 95U); return TRUE;
+		}
+	} else {
+		if (!length || address > UINT32_MAX - length ||
+		    address < RISCV32_LINUX_MMAP_BASE || address + length > RISCV32_LINUX_BRK_BASE +
+		    RISCV32_LINUX_BRK_MAX_PAGES * RISCV32_LINUX_MMAP_PAGE_SIZE) {
+			riscv32_linux_return_errno(state, RISCV32_LINUX_EINVAL); return TRUE;
+		}
+		if (number == RISCV32_LINUX_SYS_MPROTECT && prot != 1U && prot != 3U) {
+			riscv32_linux_return_errno(state, 95U); return TRUE;
+		}
+	}
+	return riscv32_linux_vm_call_dispatch(state, number, TRUE);
+}
+
+static boolean_t
 riscv32_linux_sys_mincore(riscv_saved_state_t *state)
 {
 	uint32_t addr = state->thread.x[RISCV_X_A0];
@@ -10353,9 +10438,11 @@ riscv32_linux_sys_waitid(riscv_saved_state_t *state)
 	}
 	if (riscv32_boot_arg_has("process-gate-11") && parent->pid == 2U &&
 	    __sync_add_and_fetch(&gate11_options_logged, 1U) == 1U) {
-		riscv32_early_puts("[process-gate-11] waitid job-control options=0x");
-		riscv32_early_puthex32(options);
-		riscv32_early_puts(" accepted PASS\n");
+		char record[96];
+		(void)snprintf(record, sizeof(record),
+		    "[process-gate-11] waitid job-control options=0x%08x accepted PASS\n",
+		    options);
+		riscv32_early_puts(record);
 	}
 	if ((options & RISCV32_LINUX_WEXITED) != 0U) {
 		event_mask |= RISCV32_LINUX_WAIT_EVENT_MASK_EXITED;
@@ -11220,12 +11307,11 @@ riscv32_linux_execve_resolved(riscv_saved_state_t *state, const char *path,
 	    process != (riscv32_linux_process_t *)0 && process->pid >= 3U &&
 	    !(riscv32_linux_gate14_stress_enabled() &&
 	    (process->flags & RISCV32_LINUX_PROCESS_FLAG_GATE14_CHILD) != 0U)) {
-		riscv32_early_puts(
-		    "[process-gate-11] exec argv/env collected argc=");
-		riscv32_early_putdec(args->argc);
-		riscv32_early_puts(" envc=");
-		riscv32_early_putdec(args->envc);
-		riscv32_early_puts(" PASS\n");
+		char record[96];
+		(void)snprintf(record, sizeof(record),
+		    "[process-gate-11] exec argv/env collected argc=%u envc=%u PASS\n",
+		    args->argc, args->envc);
+		riscv32_early_puts(record);
 	}
 	if (!riscv32_linux_initrd_lookup(path, &file)) {
 		return RISCV32_LINUX_ENOENT;
@@ -11762,19 +11848,19 @@ riscv32_linux_syscall_dispatch(riscv_saved_state_t *state,
 	case RISCV32_LINUX_SYS_RECVMSG:
 		return riscv32_linux_sys_socket_fd_notsock(state);
 	case RISCV32_LINUX_SYS_BRK:
-		return riscv32_linux_sys_brk(state);
+		return riscv32_linux_vm_call_dispatch(state, syscall_number, FALSE);
 	case RISCV32_LINUX_SYS_MUNMAP:
-		return riscv32_linux_sys_munmap(state);
+		return riscv32_linux_vm_call_dispatch(state, syscall_number, FALSE);
 	case RISCV32_LINUX_SYS_MREMAP:
-		return riscv32_linux_sys_mremap(state);
+		return riscv32_linux_vm_call_dispatch(state, syscall_number, FALSE);
 	case RISCV32_LINUX_SYS_CLONE:
 		return riscv32_linux_sys_clone(state);
 	case RISCV32_LINUX_SYS_EXECVE:
 		return riscv32_linux_sys_execve(state);
 	case RISCV32_LINUX_SYS_MMAP:
-		return riscv32_linux_sys_mmap(state);
+		return riscv32_linux_vm_call_dispatch(state, syscall_number, FALSE);
 	case RISCV32_LINUX_SYS_MPROTECT:
-		return riscv32_linux_sys_mprotect(state);
+		return riscv32_linux_vm_call_dispatch(state, syscall_number, FALSE);
 	case RISCV32_LINUX_SYS_MSYNC:
 	case RISCV32_LINUX_SYS_MLOCK:
 	case RISCV32_LINUX_SYS_MUNLOCK:

@@ -23,6 +23,8 @@
  * Created by h0nda1337, 2026-10-13. Raw RV32 user entry, not pthread/TLS.
  * Modified 2026-10-13: native monotonic clock and worker deadline sleep;
  * no expansion of worker Linux syscall or thread-control permissions.
+ * Modified 2026-10-14: optional allocator scopes, deferred cancellation and
+ * whole-process abort after a critical allocator fault; default profiles unchanged.
  */
 #include <machine/native_thread.h>
 #include <machine/bootinfo.h>
@@ -30,6 +32,7 @@
 #include <machine/cpu_data.h>
 #include <machine/linux_process.h>
 #include <machine/linux_signal.h>
+#include <machine/linux_syscall.h>
 #include <machine/pmap.h>
 #include <machine/trap.h>
 #include <kern/ast.h>
@@ -62,6 +65,8 @@ typedef struct {
     thread_t thread;
     uint32_t generation, state, status, sequence, destroyed;
     uint32_t stack_base, stack_size, tp;
+    uint32_t heap_depth, cancel_pending;
+    uint64_t cancel_deadline;
 } native_thread_t;
 static native_thread_t objects[CARIBE_THREAD_MAX];
 static decl_simple_lock_data(, native_thread_lock);
@@ -90,6 +95,7 @@ static void nt_unlock_process(riscv32_linux_process_t *process)
 static volatile uint32_t initialized;
 static uint32_t created, entered, exited, reaped, cancelled, faults, waits, preemptions;
 static uint32_t sleep_waits;
+static uint32_t heap_enters, heap_leaves, heap_deferred, heap_aborted;
 
 static void nt_init(void)
 {
@@ -117,6 +123,11 @@ static native_thread_t *nt_current(void)
     return thread ? (native_thread_t *)thread->machine.native_context : 0;
 }
 boolean_t riscv32_native_thread_current(void) { return nt_current() != 0; }
+boolean_t riscv32_native_heap_enabled(void)
+{
+    return riscv32_boot_arg_has("native-threads") && riscv32_boot_arg_has("native-futex") &&
+        riscv32_boot_arg_has("native-heap");
+}
 uint32_t riscv32_native_thread_identity(void)
 {
     native_thread_t *object = nt_current();
@@ -147,6 +158,25 @@ static void nt_wake(native_thread_t *object)
     __sync_add_and_fetch(&object->sequence, 1U);
     thread_wakeup((event_t)&object->sequence);
 }
+boolean_t riscv32_native_thread_user_range_busy(uint32_t pid, uint32_t address, uint32_t length)
+{
+    uint32_t i, end;
+    boolean_t busy = FALSE;
+    if (!length || address > UINT32_MAX - length) return TRUE;
+    if (__sync_fetch_and_add(&initialized, 0U) != 2U) return FALSE;
+    end = address + length;
+    nt_lock_queue();
+    for (i = 0; i < CARIBE_THREAD_MAX; i++) {
+        native_thread_t *object = &objects[i];
+        uint32_t tls_page;
+        if (!object->owner || object->owner->pid != pid) continue;
+        tls_page = object->tp & ~4095U;
+        if ((address < object->stack_base + object->stack_size && end > object->stack_base) ||
+            (address < tls_page + 4096U && end > tls_page)) { busy = TRUE; break; }
+    }
+    nt_unlock_queue();
+    return busy;
+}
 static uint64_t nt_deadline(uint32_t microseconds)
 {
     uint64_t interval;
@@ -174,10 +204,15 @@ void riscv32_native_thread_exit(uint32_t status)
     native_thread_t *object = nt_current();
     if (!object || !riscv32_native_thread_cpu_allowed()) panic("native thread exit identity");
     nt_lock_queue();
+    if (object->heap_depth) {
+        __sync_or_and_fetch(&object->owner->flags, RISCV32_LINUX_PROCESS_FLAG_HEAP_POISONED);
+        heap_aborted += object->heap_depth;
+        object->heap_depth = 0U;
+    }
     object->status = status;
     object->state = CARIBE_THREAD_EXITED;
     exited++;
-    if (status == CARIBE_THREAD_CANCELLED && !current_thread()->active) cancelled++;
+    if (status == CARIBE_THREAD_CANCELLED && (!current_thread()->active || object->cancel_pending)) cancelled++;
     nt_wake(object);
     nt_unlock_queue();
     nt_lock_process(object->owner);
@@ -192,7 +227,14 @@ void riscv32_native_thread_user_boundary(void)
 {
     native_thread_t *object = nt_current();
     riscv32_linux_process_t *process = riscv32_linux_process_current();
+    if (process && (process->flags & RISCV32_LINUX_PROCESS_FLAG_HEAP_POISONED)) {
+        if (!object) riscv32_linux_terminate_current(0U, 11U);
+        riscv32_native_thread_exit(CARIBE_THREAD_FAULTED);
+    }
+    if (object && object->cancel_pending && object->heap_depth && mach_absolute_time() >= object->cancel_deadline)
+        riscv32_native_thread_fault();
     if (!object && (!process || !riscv32_native_thread_owner_busy(process->pid))) return;
+    if (object && object->cancel_pending && !object->heap_depth) riscv32_native_thread_exit(CARIBE_THREAD_CANCELLED);
     if (object && !current_thread()->active) riscv32_native_thread_exit(CARIBE_THREAD_CANCELLED);
     /* Preserve whole-process STOP/CONT semantics without borrowing the main
        thread's signal frame or changing process lifecycle state from a worker. */
@@ -265,7 +307,17 @@ static void nt_reap(native_thread_t *object)
 static void nt_cancel(native_thread_t *object)
 {
     uint64_t deadline = nt_deadline(60000000U);
-    if (object->state != CARIBE_THREAD_EXITED) {
+    boolean_t deferred;
+    nt_lock_queue();
+    object->cancel_pending = 1U;
+    object->cancel_deadline = nt_deadline(5000000U);
+    /* Whole-process teardown discards the heap; normal thread cancellation must
+       let the allocator finish and release its genuine musl locks first. */
+    deferred = object->heap_depth && object->owner->state != RISCV32_LINUX_PROCESS_EXITING &&
+        !(object->owner->flags & RISCV32_LINUX_PROCESS_FLAG_HEAP_POISONED);
+    if (deferred) heap_deferred++;
+    nt_unlock_queue();
+    if (!deferred && object->state != CARIBE_THREAD_EXITED) {
         (void)thread_terminate_internal(object->thread);
         /* Native waits are non-interruptible: explicitly wake for cancellation. */
         (void)clear_wait(object->thread, THREAD_AWAKENED);
@@ -331,6 +383,8 @@ static int nt_create(riscv32_linux_process_t *process, struct caribe_thread_requ
     object->generation = object->generation % 0x1ffffffU + 1U;
     object->owner = process; object->state = NT_RESERVED; object->status = object->destroyed = 0;
     object->stack_base = arg->stack_base; object->stack_size = arg->stack_size; object->tp = arg->tp;
+    object->heap_depth = object->cancel_pending = 0U;
+    object->cancel_deadline = 0U;
     nt_unlock_queue();
     riscv32_linux_process_retain(process);
     kr = thread_create(process->task, &thread);
@@ -380,10 +434,32 @@ int riscv32_native_thread_ioctl(uint32_t request, uint32_t user_arg)
         thread_block(THREAD_CONTINUE_NULL); return 0;
     }
     if (nt_current() && arg.operation != CARIBE_THREAD_SELF && arg.operation != CARIBE_THREAD_INFO &&
-        arg.operation != CARIBE_THREAD_CLOCK && arg.operation != CARIBE_THREAD_SLEEP)
+        arg.operation != CARIBE_THREAD_CLOCK && arg.operation != CARIBE_THREAD_SLEEP &&
+        arg.operation != CARIBE_THREAD_HEAP_ENTER && arg.operation != CARIBE_THREAD_HEAP_LEAVE)
         return NT_NOTSUP;
     if (!riscv32_pmap_user_range_accessible(process->pmap, user_arg, sizeof(arg), TRUE)) return NT_FAULT;
     nt_init();
+    if (arg.operation == CARIBE_THREAD_HEAP_ENTER || arg.operation == CARIBE_THREAD_HEAP_LEAVE) {
+        object = nt_current();
+        if (arg.status > CARIBE_THREAD_HEAP_CANCEL_ACK) return NT_INVAL;
+        if (!riscv32_native_heap_enabled()) return NT_NOTSUP;
+        if (!object || !riscv32_native_thread_cpu_allowed()) return NT_PERM;
+        nt_lock_queue();
+        if (arg.operation == CARIBE_THREAD_HEAP_ENTER) {
+            if (object->heap_depth == UINT32_MAX) { nt_unlock_queue(); return NT_INVAL; }
+            object->heap_depth++; heap_enters++;
+        } else {
+            if (!object->heap_depth) { nt_unlock_queue(); return NT_INVAL; }
+            /* First report cancellation while keeping the outer scope active.
+               The adapter can free an unreturned allocation before committing. */
+            if (object->heap_depth == 1U && object->cancel_pending && !arg.status) {
+                nt_unlock_queue(); return CARIBE_THREAD_CANCELLED;
+            }
+            object->heap_depth--; heap_leaves++;
+        }
+        nt_unlock_queue();
+        return 0;
+    }
     if (arg.operation == CARIBE_THREAD_CLOCK) {
         uint64_t now;
         absolutetime_to_nanoseconds(mach_absolute_time(), &now);
@@ -414,7 +490,15 @@ int riscv32_native_thread_ioctl(uint32_t request, uint32_t user_arg)
         arg.cancelled = cancelled; arg.faults = faults;
         arg.waits = __sync_fetch_and_add(&waits, 0U); arg.preemptions = __sync_fetch_and_add(&preemptions, 0U);
         arg.reserved[CARIBE_THREAD_SLEEP_WAITS] = __sync_fetch_and_add(&sleep_waits, 0U);
+        arg.reserved[CARIBE_THREAD_HEAP_FEATURE] = riscv32_native_heap_enabled() ? CARIBE_THREAD_HEAP_ENABLED : 0U;
+        arg.reserved[CARIBE_THREAD_HEAP_ENTERS] = heap_enters;
+        arg.reserved[CARIBE_THREAD_HEAP_LEAVES] = heap_leaves;
+        arg.reserved[CARIBE_THREAD_HEAP_DEFERRED] = heap_deferred;
+        arg.reserved[CARIBE_THREAD_HEAP_ABORTED] = heap_aborted;
+        for (i = 0; i < CARIBE_THREAD_MAX; i++)
+            if (objects[i].owner) arg.reserved[CARIBE_THREAD_HEAP_ACTIVE] += objects[i].heap_depth;
         nt_unlock_queue();
+        arg.reserved[CARIBE_THREAD_HEAP_WAITERS] = riscv32_native_futex_owner_waiters(process->pmap);
     } else {
         nt_lock_queue(); object = nt_lookup(arg.id);
         if (!object || object->owner != process) { nt_unlock_queue(); return object ? NT_PERM : NT_INVAL; }
